@@ -7,8 +7,13 @@ import {
   roomQuestionsPath,
   roomResponsesPath,
   roomPath,
+  roomHostBundlePath,
 } from '@shared/firebase/config.js';
-import { adminStorageKey, aggregateLeaderboardFromResponses, MODES } from '@shared/utils/helpers.js';
+import {
+  readHostCredential,
+  aggregateLeaderboardFromResponses,
+  MODES,
+} from '@shared/utils/helpers.js';
 import GlassCard from '@shared/components/GlassCard.jsx';
 import LiveResults from '@shared/components/LiveResults.jsx';
 import OverallChart from '@shared/components/OverallChart.jsx';
@@ -30,27 +35,33 @@ export default function ResultsWindow() {
   const [loadError, setLoadError] = useState('');
   const [selectedQuestionId, setSelectedQuestionId] = useState(null);
 
-  const adminToken =
-    typeof window !== 'undefined'
-      ? localStorage.getItem(adminStorageKey(roomCode))
-      : null;
-
   useEffect(() => {
-    if (!roomCode || !adminToken) {
+    if (!roomCode) return undefined;
+    const cred = readHostCredential(roomCode);
+    if (!cred?.token) {
       setAuthError('missing_token');
       return undefined;
     }
     const metaRef = ref(db, roomMetaPath(roomCode));
     return onValue(
       metaRef,
-      (snap) => {
+      async (snap) => {
         if (!snap.exists()) {
           setLoadError('Room not found.');
           setMeta(null);
           return;
         }
         const data = snap.val();
-        if (data.adminToken !== adminToken) {
+        let ok = false;
+        if (data.adminToken) {
+          ok = data.adminToken === cred.token;
+        } else if (cred.bundleKey) {
+          const tSnap = await get(
+            ref(db, `${roomHostBundlePath(roomCode, cred.bundleKey)}/adminToken`)
+          );
+          ok = tSnap.val() === cred.token;
+        }
+        if (!ok) {
           setAuthError('invalid_token');
           setMeta(null);
           return;
@@ -61,7 +72,7 @@ export default function ResultsWindow() {
       },
       () => setLoadError('Could not load room metadata.')
     );
-  }, [roomCode, adminToken]);
+  }, [roomCode]);
 
   useEffect(() => {
     if (!roomCode || authError || !meta) return undefined;
@@ -99,16 +110,22 @@ export default function ResultsWindow() {
   );
 
   async function handleDownloadJson() {
-    const snap = await get(ref(db, roomPath(roomCode)));
-    const blob = new Blob([JSON.stringify(snap.val(), null, 2)], {
-      type: 'application/json',
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `live-with-poll-room-${roomCode}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      const snap = await get(ref(db, roomPath(roomCode)));
+      const blob = new Blob([JSON.stringify(snap.val(), null, 2)], {
+        type: 'application/json',
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `live-with-poll-room-${roomCode}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+    }
   }
 
   if (authError) {

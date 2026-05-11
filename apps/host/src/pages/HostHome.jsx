@@ -1,17 +1,22 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ref, set, get } from 'firebase/database';
-import { db, roomMetaPath } from '@shared/firebase/config.js';
+import { db, roomMetaPath, roomPath } from '@shared/firebase/config.js';
 import {
   generateRoomCode,
   generateAdminToken,
+  generateId,
   MODES,
-  adminStorageKey,
+  writeHostCredential,
   RESPONSE_PRIVACY,
+  COMMENT_PRIVACY,
   QUIZ_PHASE,
+  trackHostRoom,
 } from '@shared/utils/helpers.js';
 import { DEFAULT_MUSIC_TRACK_ID, DEFAULT_MUSIC_VOLUME } from '@shared/constants/musicTracks.js';
 import GlassCard from '@shared/components/GlassCard.jsx';
+
+const DEFAULT_QUIZ_ID = 'default';
 
 export default function HostHome() {
   const navigate = useNavigate();
@@ -30,21 +35,35 @@ export default function HostHome() {
       }
 
       const adminToken = generateAdminToken();
-      await set(ref(db, roomMetaPath(code)), {
-        adminToken,
-        mode: MODES.LIVE_POLL,
-        activeQuestionId: null,
-        createdAt: Date.now(),
-        responsePrivacy: RESPONSE_PRIVACY.PUBLIC,
-        sessionStatus: 'live',
-        musicTrackId: DEFAULT_MUSIC_TRACK_ID,
-        musicVolume: DEFAULT_MUSIC_VOLUME,
-        quizPhase: QUIZ_PHASE.IDLE,
-        quizActiveQuestionId: null,
-        quizOpenedAt: null,
+      const bundleKey = generateId('hb');
+
+      await set(ref(db, roomPath(code)), {
+        meta: {
+          mode: MODES.LIVE_POLL,
+          activeQuestionId: null,
+          createdAt: Date.now(),
+          responsePrivacy: RESPONSE_PRIVACY.PUBLIC,
+          commentPrivacy: COMMENT_PRIVACY.PUBLIC,
+          commentsHidden: false,
+          sessionStatus: 'live',
+          musicTrackId: DEFAULT_MUSIC_TRACK_ID,
+          musicVolume: DEFAULT_MUSIC_VOLUME,
+          quizPhase: QUIZ_PHASE.IDLE,
+          quizActiveQuestionId: null,
+          quizOpenedAt: null,
+          quizFullMode: false,
+          activeQuizId: DEFAULT_QUIZ_ID,
+          quizzes: {
+            [DEFAULT_QUIZ_ID]: { title: 'Quiz 1', order: 0 },
+          },
+        },
+        _hb: {
+          [bundleKey]: { adminToken },
+        },
       });
 
-      localStorage.setItem(adminStorageKey(code), adminToken);
+      writeHostCredential(code, adminToken, bundleKey);
+      trackHostRoom(code);
       navigate(`/admin/${code}`);
     } catch (e) {
       console.error(e);
@@ -59,17 +78,25 @@ export default function HostHome() {
       <GlassCard>
         <h1 className="text-2xl font-bold text-neutral-50">Live with Poll — Host</h1>
         <p className="mt-2 text-sm text-neutral-400">
-          Create a room to get a 5-digit PIN. Participants use the main site — not
-          this console — to join.
+          Create a room to get a 5-digit PIN. Participants use the main site — not this console — to
+          join.
         </p>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={handleCreateSession}
-          className="glass-input mt-6 w-full rounded-xl border border-red-500/30 bg-red-950/30 px-4 py-3 text-sm font-semibold text-red-100 transition hover:bg-red-900/40 disabled:opacity-60"
-        >
-          {busy ? 'Creating…' : 'Create new room'}
-        </button>
+        <div className="mt-6 flex flex-col gap-2 sm:flex-row">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={handleCreateSession}
+            className="glass-input w-full rounded-xl border border-red-500/30 bg-red-950/30 px-4 py-3 text-sm font-semibold text-red-100 transition hover:bg-red-900/40 disabled:opacity-60 sm:flex-1"
+          >
+            {busy ? 'Creating…' : 'Create new room'}
+          </button>
+          <Link
+            to="/rooms"
+            className="glass-input w-full rounded-xl px-4 py-3 text-center text-sm font-semibold text-neutral-100 no-underline sm:flex-1"
+          >
+            My rooms
+          </Link>
+        </div>
       </GlassCard>
       {error ? (
         <p

@@ -19,11 +19,19 @@ export async function burstConfetti(strength = 1) {
   });
 }
 
+/**
+ * Continuous leaderboard confetti. Returns `cancel()` to stop the rAF loop
+ * (e.g. on component unmount).
+ */
 export async function leaderboardConfetti() {
   const confetti = await getConfetti();
   const duration = 2200;
   const end = Date.now() + duration;
-  (function frame() {
+  let raf = 0;
+  let cancelled = false;
+
+  function frame() {
+    if (cancelled) return;
     confetti({
       particleCount: 3,
       angle: 60,
@@ -38,6 +46,15 @@ export async function leaderboardConfetti() {
       origin: { x: 1, y: 0.65 },
       colors: ['#a78bfa', '#22d3ee', '#fb7185'],
     });
-    if (Date.now() < end) requestAnimationFrame(frame);
-  })();
+    if (Date.now() < end) {
+      raf = requestAnimationFrame(frame);
+    }
+  }
+
+  raf = requestAnimationFrame(frame);
+
+  return function cancel() {
+    cancelled = true;
+    cancelAnimationFrame(raf);
+  };
 }

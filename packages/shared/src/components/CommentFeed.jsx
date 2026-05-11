@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ref, remove, onValue } from 'firebase/database';
 import { db, roomCommentsPath } from '../firebase/config';
+import { COMMENT_PRIVACY } from '../utils/helpers';
 
-export default function CommentFeed({ roomCode, comments: commentsProp, isAdmin }) {
+export default function CommentFeed({
+  roomCode,
+  comments: commentsProp,
+  isAdmin,
+  commentPrivacy = COMMENT_PRIVACY.PUBLIC,
+  participantId,
+}) {
   const [liveComments, setLiveComments] = useState({});
 
   useEffect(() => {
@@ -22,6 +29,11 @@ export default function CommentFeed({ roomCode, comments: commentsProp, isAdmin 
     return entries;
   }, [comments]);
 
+  const visible = useMemo(() => {
+    if (isAdmin || commentPrivacy !== COMMENT_PRIVACY.PRIVATE) return sorted;
+    return sorted.filter((c) => c.authorId === participantId);
+  }, [sorted, isAdmin, commentPrivacy, participantId]);
+
   async function handleDelete(commentId) {
     if (!isAdmin || !commentId) return;
     await remove(ref(db, `${roomCommentsPath(roomCode)}/${commentId}`));
@@ -33,15 +45,17 @@ export default function CommentFeed({ roomCode, comments: commentsProp, isAdmin 
         <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
           Live comments
         </p>
-        <span className="text-xs text-neutral-500">{sorted.length} total</span>
+        <span className="text-xs text-neutral-500">{visible.length} shown</span>
       </div>
       <ul className="max-h-64 space-y-2 overflow-y-auto pr-1 text-sm">
-        {sorted.length === 0 ? (
+        {visible.length === 0 ? (
           <li className="rounded-lg border border-dashed border-white/15 px-3 py-6 text-center text-neutral-500">
-            No comments yet.
+            {commentPrivacy === COMMENT_PRIVACY.PRIVATE && !isAdmin
+              ? 'No comments from you yet.'
+              : 'No comments yet.'}
           </li>
         ) : (
-          sorted.map((c) => (
+          visible.map((c) => (
             <li
               key={c.id}
               className="flex items-start justify-between gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2"

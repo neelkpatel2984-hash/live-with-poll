@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ref,
   onValue,
@@ -12,6 +12,7 @@ const TTL_MS = 4200;
 
 export default function EmojiFizzLayer({ roomCode, enabled }) {
   const [particles, setParticles] = useState([]);
+  const intervalRef = useRef(null);
 
   useEffect(() => {
     if (!roomCode || !enabled) return undefined;
@@ -31,13 +32,23 @@ export default function EmojiFizzLayer({ roomCode, enabled }) {
   }, [roomCode, enabled]);
 
   useEffect(() => {
-    if (!particles.length) return undefined;
-    const t = setInterval(() => {
+    if (!roomCode) return undefined;
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    if (!enabled) return undefined;
+    intervalRef.current = setInterval(() => {
       const now = Date.now();
       setParticles((prev) => prev.filter((p) => now - p.ts < TTL_MS));
     }, 400);
-    return () => clearInterval(t);
-  }, [particles.length]);
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [roomCode, enabled]);
 
   if (!enabled) return null;
 

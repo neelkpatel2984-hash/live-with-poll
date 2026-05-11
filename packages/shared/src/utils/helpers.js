@@ -11,6 +11,18 @@ export const RESPONSE_PRIVACY = {
   PRIVATE: 'private',
 };
 
+export const COMMENT_PRIVACY = {
+  PUBLIC: 'public',
+  PRIVATE: 'private',
+};
+
+/** Which session modes a question is intended for (strict mode separation). */
+export const QUESTION_VISIBILITY = {
+  POLL: 'poll',
+  QUIZ: 'quiz',
+  BOTH: 'both',
+};
+
 export const QUIZ_PHASE = {
   IDLE: 'idle',
   QUESTION: 'question',
@@ -56,6 +68,103 @@ export function getOrCreateParticipantId() {
 
 export function adminStorageKey(roomCode) {
   return `livepoll_admin_${roomCode}`;
+}
+
+/** @returns {{ token: string, bundleKey: string | null } | null} */
+export function readHostCredential(roomCode) {
+  if (typeof window === 'undefined' || !roomCode) return null;
+  try {
+    const raw = localStorage.getItem(adminStorageKey(roomCode));
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && typeof parsed.token === 'string') {
+        return {
+          token: parsed.token,
+          bundleKey: typeof parsed.bundleKey === 'string' ? parsed.bundleKey : null,
+        };
+      }
+    } catch {
+      /* legacy plain string token */
+    }
+    return { token: raw, bundleKey: null };
+  } catch {
+    return null;
+  }
+}
+
+export function writeHostCredential(roomCode, token, bundleKey) {
+  if (typeof window === 'undefined' || !roomCode) return;
+  try {
+    localStorage.setItem(
+      adminStorageKey(roomCode),
+      JSON.stringify({ token, bundleKey: bundleKey || null })
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
+const HOST_ROOMS_KEY = 'livepoll_host_rooms';
+
+export function trackHostRoom(roomCode) {
+  if (typeof window === 'undefined' || !roomCode) return;
+  try {
+    const raw = localStorage.getItem(HOST_ROOMS_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    const arr = Array.isArray(list) ? list : [];
+    if (!arr.includes(roomCode)) {
+      arr.unshift(roomCode);
+      localStorage.setItem(HOST_ROOMS_KEY, JSON.stringify(arr.slice(0, 200)));
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+export function readHostRoomList() {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(HOST_ROOMS_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+export function removeHostRoomFromList(roomCode) {
+  if (typeof window === 'undefined' || !roomCode) return;
+  try {
+    const arr = readHostRoomList().filter((c) => c !== roomCode);
+    localStorage.setItem(HOST_ROOMS_KEY, JSON.stringify(arr));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function defaultQuestionVisibilityForMode(mode) {
+  if (mode === MODES.QUIZ) return QUESTION_VISIBILITY.QUIZ;
+  if (mode === MODES.LIVE_POLL) return QUESTION_VISIBILITY.POLL;
+  return QUESTION_VISIBILITY.BOTH;
+}
+
+/** Participant UI: whether this question should appear in the current session mode. */
+export function questionAllowedInMode(question, mode) {
+  const v = question?.visibility || QUESTION_VISIBILITY.BOTH;
+  if (mode === MODES.LIVE_POLL) {
+    return v === QUESTION_VISIBILITY.POLL || v === QUESTION_VISIBILITY.BOTH;
+  }
+  if (mode === MODES.QUIZ) {
+    return v === QUESTION_VISIBILITY.QUIZ || v === QUESTION_VISIBILITY.BOTH;
+  }
+  return true;
+}
+
+export function questionBelongsToQuiz(question, activeQuizId) {
+  const qid = question?.quizId ?? 'default';
+  const active = activeQuizId ?? 'default';
+  return qid === active;
 }
 
 export function participantNameKey(roomCode) {
@@ -126,17 +235,30 @@ export function aggregateLeaderboardFromResponses(responsesMap, questionsMap) {
       if (!totals[pid]) {
         totals[pid] = {
           participantId: pid,
-          displayName: row.displayName || 'Player',
+          publicName: '',
+          legacyName: '',
           points: 0,
           correctCount: 0,
         };
       }
-      if (row.displayName) totals[pid].displayName = row.displayName;
+      const pub = String(row.publicName ?? '').trim();
+      const legacy = String(row.displayName ?? '').trim();
+      if (pub) totals[pid].publicName = pub;
+      else if (legacy && !totals[pid].publicName) {
+        totals[pid].legacyName = totals[pid].legacyName || legacy;
+      }
       totals[pid].points += Number(row.pointsEarned || 0);
       if (row.correct) totals[pid].correctCount += 1;
     });
   });
-  return Object.values(totals).sort((a, b) => b.points - a.points);
+  return Object.values(totals)
+    .map((row) => ({
+      participantId: row.participantId,
+      displayName: row.publicName || row.legacyName || 'Player',
+      points: row.points,
+      correctCount: row.correctCount,
+    }))
+    .sort((a, b) => b.points - a.points);
 }
 
 export function roomAllowsParticipantPdf(questionsMap) {

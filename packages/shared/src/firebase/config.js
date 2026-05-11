@@ -1,3 +1,7 @@
+/**
+ * Realtime Database URL helpers. Deploy strict rules from the repo root file
+ * `database.rules.json` (Firebase console → Realtime Database → Rules).
+ */
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getDatabase } from 'firebase/database';
 
@@ -30,3 +34,13 @@ export const roomResponsePath = (roomCode, questionId, participantId) =>
   `rooms/${roomCode}/responses/${questionId}/${participantId}`;
 export const roomCommentsPath = (roomCode) => `rooms/${roomCode}/comments`;
 export const roomEmojiEventsPath = (roomCode) => `rooms/${roomCode}/emojiEvents`;
+/** Append-only feed for admin live feed (query by ts, limitToLast). */
+export const roomAnswerFeedPath = (roomCode) => `rooms/${roomCode}/answerFeed`;
+/** Participant presence: `rooms/{code}/presence/{participantId}`. */
+export const roomPresencePath = (roomCode) => `rooms/${roomCode}/presence`;
+/** Host-only bundle path (random key in localStorage). Not read by participant app. */
+export const roomHostBundlePath = (roomCode, bundleKey) =>
+  `rooms/${roomCode}/_hb/${bundleKey}`;
+/** Per-user last emoji ts for rules-friendly rate limiting. */
+export const roomEmojiRatePath = (roomCode, participantId) =>
+  `rooms/${roomCode}/emojiRate/${participantId}`;

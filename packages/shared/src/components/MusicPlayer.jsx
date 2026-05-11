@@ -33,9 +33,6 @@ export default function MusicPlayer({ musicTrackId, musicVolume }) {
       el.play().catch(() => {
         /* missing file or autoplay policy */
       });
-    } else {
-      el.volume = Math.min(1, Math.max(0, Number(musicVolume) ?? 0.35));
-      el.play().catch(() => {});
     }
 
     const onErr = () => {
@@ -47,7 +44,17 @@ export default function MusicPlayer({ musicTrackId, musicVolume }) {
       cancelled = true;
       el.removeEventListener('error', onErr);
     };
-  }, [musicTrackId, musicVolume]);
+  }, [musicTrackId]);
+
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el || !lastSrcRef.current) return undefined;
+    el.volume = Math.min(1, Math.max(0, Number(musicVolume) ?? 0.35));
+    if (el.paused) {
+      el.play().catch(() => {});
+    }
+    return undefined;
+  }, [musicVolume]);
 
   return null;
 }

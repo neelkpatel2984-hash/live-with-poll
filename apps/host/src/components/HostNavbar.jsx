@@ -24,6 +24,13 @@ export default function HostNavbar() {
           >
             Participant site
           </GlassCard>
+          <GlassCard
+            as={Link}
+            to="/rooms"
+            className="!p-2 text-sm font-medium text-neutral-100 no-underline hover:bg-white/10"
+          >
+            My rooms
+          </GlassCard>
           <GlassCard as={Link} to="/" className="!p-2 text-sm font-medium text-neutral-100 no-underline hover:bg-white/10">
             Host home
           </GlassCard>

@@ -22,12 +22,27 @@
   }
 
   .light body {
-    background-color: #0a0a0a;
+    @apply text-slate-900;
+    background-color: #f4f4f5;
     background-image:
-      radial-gradient(ellipse 120% 80% at 50% -20%, rgba(248, 113, 113, 0.18), transparent 55%),
-      radial-gradient(ellipse 80% 50% at 100% 50%, rgba(185, 28, 28, 0.1), transparent 45%),
-      radial-gradient(ellipse 70% 60% at 0% 80%, rgba(127, 29, 29, 0.12), transparent 50%);
+      radial-gradient(ellipse 120% 80% at 50% -20%, rgba(248, 113, 113, 0.14), transparent 55%),
+      radial-gradient(ellipse 80% 50% at 100% 50%, rgba(252, 165, 165, 0.12), transparent 45%),
+      radial-gradient(ellipse 70% 60% at 0% 80%, rgba(254, 202, 202, 0.18), transparent 50%);
     background-attachment: fixed;
+  }
+
+  .light .text-neutral-50,
+  .light .text-neutral-100 {
+    @apply text-slate-900;
+  }
+
+  .light .text-neutral-200 {
+    @apply text-slate-800;
+  }
+
+  .light .text-neutral-400,
+  .light .text-neutral-500 {
+    @apply text-slate-600;
   }
 }
 

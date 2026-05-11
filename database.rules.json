@@ -1,0 +1,54 @@
+{
+  "rules": {
+    "rooms": {
+      "$roomCode": {
+        "meta": {
+          ".read": true,
+          ".write": true
+        },
+        "_hb": {
+          "$bundleKey": {
+            ".read": true,
+            ".write": true
+          }
+        },
+        "questions": {
+          ".read": true,
+          ".write": true
+        },
+        "responses": {
+          ".read": true,
+          ".write": true
+        },
+        "answerFeed": {
+          ".read": true,
+          ".indexOn": ["ts"],
+          ".write": "newData.hasChildren(['ts', 'questionId', 'participantId']) && newData.child('ts').isNumber() && newData.child('ts').val() <= now + 120000"
+        },
+        "comments": {
+          ".read": true,
+          ".write": "newData.hasChildren(['ts', 'text']) && newData.child('text').isString() && newData.child('text').val().length <= 500"
+        },
+        "emojiEvents": {
+          ".read": true,
+          ".write": "newData.hasChildren(['ts', 'emoji', 'authorId']) && newData.child('emoji').isString() && newData.child('emoji').val().length <= 16 && newData.child('ts').isNumber() && newData.child('ts').val() <= now + 60000",
+          "$eventId": {
+            ".validate": "newData.hasChildren(['ts', 'emoji', 'authorId'])"
+          }
+        },
+        "emojiRate": {
+          "$participantId": {
+            ".read": true,
+            ".write": "newData.hasChildren(['lastTs']) && newData.child('lastTs').isNumber() && newData.child('lastTs').val() <= now + 60000 && (!data.exists() || newData.child('lastTs').val() >= data.child('lastTs').val() + 900)"
+          }
+        },
+        "presence": {
+          "$participantId": {
+            ".read": true,
+            ".write": "newData.hasChildren(['ts']) && newData.child('ts').isNumber()"
+          }
+        }
+      }
+    }
+  }
+}

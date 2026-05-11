@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ref, onValue, set, push } from 'firebase/database';
+import { ref, onValue, set, push, get, onDisconnect, remove } from 'firebase/database';
 import {
   db,
   roomMetaPath,
@@ -9,6 +9,9 @@ import {
   roomCommentsPath,
   roomResponsePath,
   roomEmojiEventsPath,
+  roomAnswerFeedPath,
+  roomPresencePath,
+  roomEmojiRatePath,
 } from '@shared/firebase/config.js';
 import {
   MODES,
@@ -17,11 +20,14 @@ import {
   participantNameKey,
   normalizeAnswerValue,
   RESPONSE_PRIVACY,
+  COMMENT_PRIVACY,
   QUIZ_PHASE,
   computeQuizPoints,
   answersMatch,
   aggregateLeaderboardFromResponses,
   roomAllowsParticipantPdf,
+  questionAllowedInMode,
+  questionBelongsToQuiz,
 } from '@shared/utils/helpers.js';
 import { burstConfetti, leaderboardConfetti } from '@shared/utils/confettiFx.js';
 import { QUICK_EMOJIS } from '@shared/constants/quickEmojis.js';
@@ -59,9 +65,9 @@ export default function UserRoom() {
   });
   const [commentText, setCommentText] = useState('');
   const [localAnswers, setLocalAnswers] = useState({});
-
-  const participantId = useMemo(() => getOrCreateParticipantId(), []);
+  const [participantId] = useState(() => getOrCreateParticipantId());
   const prevQuizPhaseRef = useRef(null);
+  const confettiCancelRef = useRef(null);
 
   useEffect(() => {
     const fromNav = location.state?.displayName;
@@ -114,6 +120,21 @@ export default function UserRoom() {
     });
   }, [roomCode, meta, participantId]);
 
+  useEffect(() => {
+    if (!roomCode || !displayName.trim()) return undefined;
+    const presRef = ref(db, `${roomPresencePath(roomCode)}/${participantId}`);
+    const payload = { ts: Date.now(), displayName: displayName.trim() };
+    void set(presRef, payload);
+    void onDisconnect(presRef).remove();
+    const t = setInterval(() => {
+      void set(presRef, { ts: Date.now(), displayName: displayName.trim() });
+    }, 25000);
+    return () => {
+      clearInterval(t);
+      void remove(presRef);
+    };
+  }, [roomCode, displayName, participantId]);
+
   const questionList = useMemo(() => sortedQuestions(questions), [questions]);
 
   const responsePrivacy = meta?.responsePrivacy || RESPONSE_PRIVACY.PUBLIC;
@@ -129,25 +150,42 @@ export default function UserRoom() {
     return leaderboardRows.filter((r) => r.participantId === participantId);
   }, [isPrivate, leaderboardRows, participantId]);
 
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (meta?.mode !== MODES.QUIZ || meta?.quizPhase !== QUIZ_PHASE.QUESTION) return undefined;
+    const t = setInterval(() => setNowTick(Date.now()), 250);
+    return () => clearInterval(t);
+  }, [meta?.mode, meta?.quizPhase]);
+
   useEffect(() => {
     const phase = meta?.quizPhase;
     const prev = prevQuizPhaseRef.current;
     prevQuizPhaseRef.current = phase;
-    if (!meta || meta.mode !== MODES.QUIZ) return;
+    if (!meta || meta.mode !== MODES.QUIZ) return undefined;
+    let cancelled = false;
     if (phase === QUIZ_PHASE.REVEALED && prev !== QUIZ_PHASE.REVEALED) {
       void burstConfetti(0.75);
     }
     if (phase === QUIZ_PHASE.LEADERBOARD && prev !== QUIZ_PHASE.LEADERBOARD) {
-      void leaderboardConfetti();
+      void leaderboardConfetti().then((cancel) => {
+        if (cancelled) cancel?.();
+        else confettiCancelRef.current = cancel;
+      });
     }
-  }, [meta?.quizPhase, meta?.mode, meta]);
+    return () => {
+      cancelled = true;
+      confettiCancelRef.current?.();
+      confettiCancelRef.current = null;
+    };
+  }, [meta?.quizPhase, meta?.mode]);
 
   const visibleQuestions = useMemo(() => {
     if (!meta) return [];
-    if (meta.mode === MODES.FORM) return questionList;
+    const modeFiltered = questionList.filter((q) => questionAllowedInMode(q, meta.mode));
+    if (meta.mode === MODES.FORM) return modeFiltered;
     if (meta.mode === MODES.LIVE_POLL) {
       if (!meta.activeQuestionId) return [];
-      return questionList.filter((q) => q.id === meta.activeQuestionId);
+      return modeFiltered.filter((q) => q.id === meta.activeQuestionId);
     }
     if (meta.mode === MODES.QUIZ) {
       if (
@@ -156,8 +194,13 @@ export default function UserRoom() {
       ) {
         return [];
       }
+      const activeQz = meta.activeQuizId ?? 'default';
+      const inQuiz = modeFiltered.filter((q) => questionBelongsToQuiz(q, activeQz));
+      if (meta.quizFullMode && meta.quizPhase === QUIZ_PHASE.QUESTION) {
+        return inQuiz;
+      }
       if (!meta.quizActiveQuestionId) return [];
-      return questionList.filter((q) => q.id === meta.quizActiveQuestionId);
+      return inQuiz.filter((q) => q.id === meta.quizActiveQuestionId);
     }
     return [];
   }, [meta, questionList]);
@@ -176,18 +219,26 @@ export default function UserRoom() {
   }
 
   async function submitAnswer(question, value) {
+    if (meta?.sessionStatus === 'ended') return;
     if (!displayName.trim()) return;
     const basePayload = {
       participantId,
       displayName: question.showNames ? displayName.trim() : '',
+      publicName: question.showNames ? displayName.trim() : '',
       answer: normalizeAnswerValue(question.type, value),
       ts: Date.now(),
     };
 
     let pointsEarned = null;
     let correct = null;
+    const scoringOn =
+      question.scoringEnabled !== false && String(question.correctAnswer ?? '').trim() !== '';
 
-    if (meta.mode === MODES.QUIZ && meta.quizPhase === QUIZ_PHASE.QUESTION) {
+    if (
+      meta.mode === MODES.QUIZ &&
+      meta.quizPhase === QUIZ_PHASE.QUESTION &&
+      scoringOn
+    ) {
       const openedAt = meta.quizOpenedAt || 0;
       const ca = question.correctAnswer;
       correct = answersMatch(question.type, value, ca);
@@ -200,14 +251,30 @@ export default function UserRoom() {
       });
     }
 
-    await set(ref(db, roomResponsePath(roomCode, question.id, participantId)), {
+    const respRef = ref(db, roomResponsePath(roomCode, question.id, participantId));
+    const feedRef = push(ref(db, roomAnswerFeedPath(roomCode)));
+    const row = {
       ...basePayload,
       ...(pointsEarned != null ? { pointsEarned, correct } : {}),
-    });
+    };
+    await Promise.all([
+      set(respRef, row),
+      set(feedRef, {
+        questionId: question.id,
+        participantId,
+        displayName: basePayload.displayName,
+        publicName: basePayload.publicName,
+        answer: basePayload.answer,
+        ts: basePayload.ts,
+        ...(pointsEarned != null ? { pointsEarned, correct } : {}),
+        showNames: question.showNames !== false,
+      }),
+    ]);
   }
 
   async function submitComment(e) {
     e.preventDefault();
+    if (meta?.sessionStatus === 'ended') return;
     const text = commentText.trim();
     if (!text || !displayName.trim()) return;
     const cRef = push(ref(db, roomCommentsPath(roomCode)));
@@ -222,6 +289,11 @@ export default function UserRoom() {
 
   async function sendEmoji(emoji) {
     if (!displayName.trim()) return;
+    const rateRef = ref(db, roomEmojiRatePath(roomCode, participantId));
+    const snap = await get(rateRef);
+    const lastTs = snap.exists() ? Number(snap.val()?.lastTs || 0) : 0;
+    if (Date.now() - lastTs < 900) return;
+    await set(rateRef, { lastTs: Date.now() });
     const evRef = push(ref(db, roomEmojiEventsPath(roomCode)));
     await set(evRef, {
       emoji,
@@ -259,6 +331,9 @@ export default function UserRoom() {
     meta?.sessionStatus === 'ended' &&
     roomAllowsParticipantPdf(questions) &&
     (meta.mode === MODES.FORM || meta.mode === MODES.QUIZ);
+
+  const sessionEnded = meta?.sessionStatus === 'ended';
+  const commentsHidden = !!meta?.commentsHidden;
 
   if (loadError || (meta === null && !loadError)) {
     return (
@@ -382,6 +457,18 @@ export default function UserRoom() {
       {visibleQuestions.map((q) => {
         const answerDisabled =
           meta.mode === MODES.QUIZ && meta.quizPhase !== QUIZ_PHASE.QUESTION;
+        const openedAt = meta.quizOpenedAt || 0;
+        const limitMs = q.timeLimitMs || 30000;
+        const deadline = openedAt + limitMs;
+        const timeExpired =
+          meta.mode === MODES.QUIZ &&
+          meta.quizPhase === QUIZ_PHASE.QUESTION &&
+          openedAt > 0 &&
+          nowTick > deadline;
+        const secondsLeft = Math.max(0, Math.ceil((deadline - nowTick) / 1000));
+        const savedLocked = !!localAnswers[q.id];
+        const btnDisabled =
+          savedLocked || answerDisabled || timeExpired || sessionEnded;
         const showResultsChart =
           !isPrivate &&
           meta.mode === MODES.QUIZ &&
@@ -392,7 +479,7 @@ export default function UserRoom() {
           <GlassCard key={q.id}>
             <div className="flex items-start justify-between gap-2">
               <h2 className="text-base font-semibold text-neutral-50">{q.text}</h2>
-              {localAnswers[q.id] ? (
+              {savedLocked ? (
                 <span className="shrink-0 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-200">
                   Saved
                 </span>
@@ -400,10 +487,20 @@ export default function UserRoom() {
             </div>
 
             {meta.mode === MODES.QUIZ && meta.quizPhase === QUIZ_PHASE.QUESTION ? (
-              <p className="mt-2 text-xs text-neutral-400">
-                Answer fast for more points. Double points:{' '}
-                {q.doublePoints ? 'on' : 'off'}.
-              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-neutral-400">
+                <span>
+                  Answer fast for more points. Double points: {q.doublePoints ? 'on' : 'off'}.
+                </span>
+                {openedAt > 0 ? (
+                  <span
+                    className={`rounded-full px-2 py-0.5 font-mono font-semibold ${
+                      timeExpired ? 'bg-red-950/60 text-red-200' : 'bg-white/10 text-neutral-100'
+                    }`}
+                  >
+                    {timeExpired ? 'Time up' : `Time left: ${secondsLeft}s`}
+                  </span>
+                ) : null}
+              </div>
             ) : null}
 
             {showResultsChart ? (
@@ -423,9 +520,9 @@ export default function UserRoom() {
                     <button
                       key={opt}
                       type="button"
-                      disabled={answerDisabled}
+                      disabled={btnDisabled}
                       onClick={() => {
-                        if (!answerDisabled) submitAnswer(q, opt);
+                        if (!btnDisabled) submitAnswer(q, opt);
                       }}
                       className={`glass-input rounded-xl px-4 py-3 text-left text-sm font-medium text-neutral-50 transition hover:bg-white/10 disabled:opacity-50 ${
                         isCorrect ? 'ring-2 ring-emerald-400/80' : ''
@@ -449,9 +546,9 @@ export default function UserRoom() {
                     <button
                       key={opt}
                       type="button"
-                      disabled={answerDisabled}
+                      disabled={btnDisabled}
                       onClick={() => {
-                        if (!answerDisabled) submitAnswer(q, opt);
+                        if (!btnDisabled) submitAnswer(q, opt);
                       }}
                       className={`glass-input flex-1 rounded-xl px-4 py-3 text-sm font-semibold text-neutral-50 disabled:opacity-50 ${
                         isCorrect ? 'ring-2 ring-emerald-400/80' : ''
@@ -477,9 +574,9 @@ export default function UserRoom() {
                       <button
                         key={n}
                         type="button"
-                        disabled={answerDisabled}
+                        disabled={btnDisabled}
                         onClick={() => {
-                          if (!answerDisabled) submitAnswer(q, n);
+                          if (!btnDisabled) submitAnswer(q, n);
                         }}
                         className={`glass-input h-10 w-10 rounded-lg text-sm font-semibold text-neutral-50 disabled:opacity-50 ${
                           isCorrect ? 'ring-2 ring-emerald-400/80' : ''
@@ -517,18 +614,25 @@ export default function UserRoom() {
         </GlassCard>
       ) : null}
 
-      {meta.mode === MODES.COMMENT ||
-      meta.mode === MODES.FORM ||
-      meta.mode === MODES.LIVE_POLL ||
-      meta.mode === MODES.QUIZ ? (
+      {!commentsHidden &&
+      (meta.mode === MODES.COMMENT ||
+        meta.mode === MODES.FORM ||
+        meta.mode === MODES.LIVE_POLL ||
+        meta.mode === MODES.QUIZ) ? (
         <GlassCard>
           <h2 className="text-sm font-semibold text-neutral-50">Comments</h2>
           <p className="mt-1 text-xs text-neutral-500">
             {meta.mode === MODES.COMMENT
               ? 'This session is comment-first — keep the conversation going.'
-              : 'Visible to everyone in the room.'}
+              : (meta.commentPrivacy || COMMENT_PRIVACY.PUBLIC) === COMMENT_PRIVACY.PRIVATE
+                ? 'Private: you only see your own comments here; the host still sees everything in the dashboard.'
+                : 'Visible to everyone in the room.'}
           </p>
-          <CommentFeed roomCode={roomCode} />
+          <CommentFeed
+            roomCode={roomCode}
+            commentPrivacy={meta.commentPrivacy || COMMENT_PRIVACY.PUBLIC}
+            participantId={participantId}
+          />
           <form className="mt-3 flex flex-col gap-2 sm:flex-row" onSubmit={submitComment}>
             <input
               className="glass-input flex-1 rounded-xl px-3 py-2 text-sm text-neutral-50"
@@ -536,10 +640,12 @@ export default function UserRoom() {
               value={commentText}
               onChange={(ev) => setCommentText(ev.target.value)}
               maxLength={500}
+              disabled={sessionEnded}
             />
             <button
               type="submit"
-              className="rounded-xl bg-red-700 px-4 py-2 text-sm font-semibold text-white shadow"
+              disabled={sessionEnded}
+              className="rounded-xl bg-red-700 px-4 py-2 text-sm font-semibold text-white shadow disabled:opacity-50"
             >
               Post
             </button>

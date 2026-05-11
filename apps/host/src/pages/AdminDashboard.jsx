@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ref, onValue, update, push, remove, set, get } from 'firebase/database';
+import {
+  ref,
+  onValue,
+  update,
+  push,
+  remove,
+  set,
+  get,
+  query,
+  orderByChild,
+  limitToLast,
+} from 'firebase/database';
 import {
   db,
   roomMetaPath,
@@ -8,17 +19,29 @@ import {
   roomResponsesPath,
   roomCommentsPath,
   roomPath,
+  roomAnswerFeedPath,
+  roomPresencePath,
+  roomHostBundlePath,
 } from '@shared/firebase/config.js';
 import {
   MODES,
   QUESTION_TYPES,
-  adminStorageKey,
   defaultOptionsForType,
   RESPONSE_PRIVACY,
+  COMMENT_PRIVACY,
   QUIZ_PHASE,
   aggregateLeaderboardFromResponses,
+  readHostCredential,
+  adminStorageKey,
+  QUESTION_VISIBILITY,
+  defaultQuestionVisibilityForMode,
+  generateId,
 } from '@shared/utils/helpers.js';
-import { exportQuestionsToCsv, parseQuestionsCsv } from '@shared/utils/csvQuestions.js';
+import {
+  exportQuestionsToCsv,
+  parseQuestionsCsv,
+  buildDemoCsv,
+} from '@shared/utils/csvQuestions.js';
 import { burstConfetti, leaderboardConfetti } from '@shared/utils/confettiFx.js';
 import { MUSIC_TRACKS, DEFAULT_MUSIC_VOLUME } from '@shared/constants/musicTracks.js';
 import GlassCard from '@shared/components/GlassCard.jsx';
@@ -62,22 +85,34 @@ export default function AdminDashboard() {
   );
   const [correctAnswer, setCorrectAnswer] = useState('');
   const [doublePoints, setDoublePoints] = useState(false);
-  const [timeLimitMs, setTimeLimitMs] = useState(30000);
+  const [timeLimitSec, setTimeLimitSec] = useState(30);
   const [allowParticipantPdf, setAllowParticipantPdf] = useState(false);
+  const [questionVisibility, setQuestionVisibility] = useState(QUESTION_VISIBILITY.BOTH);
   const [selectedQuestionId, setSelectedQuestionId] = useState(null);
   const [addPanelOpen, setAddPanelOpen] = useState(true);
   const [chartView, setChartView] = useState('per');
   const [quizPushId, setQuizPushId] = useState(null);
+  const [feedRows, setFeedRows] = useState([]);
+  const [presenceCount, setPresenceCount] = useState(0);
+  const [localMusicVol, setLocalMusicVol] = useState(null);
+  const [qrOpen, setQrOpen] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState('');
+  const [newQuizTitle, setNewQuizTitle] = useState('');
   const csvInputRef = useRef(null);
+  const musicVolDebounceRef = useRef(null);
+  const confettiCancelRef = useRef(null);
 
-  const adminToken =
-    typeof window !== 'undefined'
-      ? localStorage.getItem(adminStorageKey(roomCode))
-      : null;
+  const [focusTick, setFocusTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setFocusTick((n) => n + 1);
+    window.addEventListener('focus', bump);
+    return () => window.removeEventListener('focus', bump);
+  }, []);
 
   useEffect(() => {
     if (!roomCode) return undefined;
-    if (!adminToken) {
+    const cred = readHostCredential(roomCode);
+    if (!cred?.token) {
       setAuthError('missing_token');
       return undefined;
     }
@@ -85,14 +120,23 @@ export default function AdminDashboard() {
     const metaRef = ref(db, roomMetaPath(roomCode));
     return onValue(
       metaRef,
-      (snap) => {
+      async (snap) => {
         if (!snap.exists()) {
           setLoadError('Room not found.');
           setMeta(null);
           return;
         }
         const data = snap.val();
-        if (data.adminToken !== adminToken) {
+        let ok = false;
+        if (data.adminToken) {
+          ok = data.adminToken === cred.token;
+        } else if (cred.bundleKey) {
+          const tSnap = await get(
+            ref(db, `${roomHostBundlePath(roomCode, cred.bundleKey)}/adminToken`)
+          );
+          ok = tSnap.val() === cred.token;
+        }
+        if (!ok) {
           setAuthError('invalid_token');
           setMeta(null);
           return;
@@ -103,7 +147,7 @@ export default function AdminDashboard() {
       },
       () => setLoadError('Could not load room metadata.')
     );
-  }, [roomCode, adminToken]);
+  }, [roomCode, focusTick]);
 
   useEffect(() => {
     if (!roomCode || authError || !meta) return undefined;
@@ -127,7 +171,37 @@ export default function AdminDashboard() {
     return onValue(cRef, (snap) => setComments(snap.val() || {}));
   }, [roomCode, meta, authError]);
 
+  useEffect(() => {
+    if (!roomCode || authError || !meta) return undefined;
+    const feedQ = query(
+      ref(db, roomAnswerFeedPath(roomCode)),
+      orderByChild('ts'),
+      limitToLast(50)
+    );
+    return onValue(feedQ, (snap) => {
+      const val = snap.val() || {};
+      const rows = Object.entries(val).map(([id, row]) => ({ id, ...row }));
+      rows.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+      setFeedRows(rows.slice(0, 50));
+    });
+  }, [roomCode, meta, authError]);
+
+  useEffect(() => {
+    if (!roomCode || authError || !meta) return undefined;
+    const pRef = ref(db, roomPresencePath(roomCode));
+    return onValue(pRef, (snap) => {
+      const v = snap.val() || {};
+      setPresenceCount(Object.keys(v).length);
+    });
+  }, [roomCode, meta, authError]);
+
   const questionList = useMemo(() => sortedQuestions(questions), [questions]);
+
+  const activeQuizId = meta?.activeQuizId ?? 'default';
+  const questionListForActiveQuiz = useMemo(
+    () => questionList.filter((q) => (q.quizId ?? 'default') === activeQuizId),
+    [questionList, activeQuizId]
+  );
 
   useEffect(() => {
     if (!questionList.length) {
@@ -150,23 +224,23 @@ export default function AdminDashboard() {
   }, [questionList, meta?.activeQuestionId, meta?.mode]);
 
   useEffect(() => {
-    if (!questionList.length) {
+    if (!questionListForActiveQuiz.length) {
       setQuizPushId(null);
       return;
     }
     if (
       meta?.quizActiveQuestionId &&
-      questionList.some((q) => q.id === meta.quizActiveQuestionId)
+      questionListForActiveQuiz.some((q) => q.id === meta.quizActiveQuestionId)
     ) {
       setQuizPushId(meta.quizActiveQuestionId);
       return;
     }
     setQuizPushId((prev) =>
-      prev && questionList.some((q) => q.id === prev)
+      prev && questionListForActiveQuiz.some((q) => q.id === prev)
         ? prev
-        : questionList[0].id
+        : questionListForActiveQuiz[0].id
     );
-  }, [questionList, meta?.quizActiveQuestionId]);
+  }, [questionListForActiveQuiz, meta?.quizActiveQuestionId]);
 
   const selectedQuestion =
     questionList.find((q) => q.id === selectedQuestionId) || null;
@@ -174,48 +248,54 @@ export default function AdminDashboard() {
     ? responses[selectedQuestion.id] || {}
     : {};
 
-  const recentResponses = useMemo(() => {
-    const rows = [];
-    Object.entries(responses).forEach(([qid, byUser]) => {
-      const q = questions[qid];
-      Object.entries(byUser || {}).forEach(([pid, row]) => {
-        rows.push({
-          key: `${qid}-${pid}`,
-          qid,
-          qText: q?.text || 'Question',
-          showNames: q?.showNames !== false,
-          ...row,
-        });
-      });
-    });
-    rows.sort((a, b) => (b.ts || 0) - (a.ts || 0));
-    return rows.slice(0, 50);
-  }, [responses, questions]);
-
   const leaderboardRows = useMemo(
     () => aggregateLeaderboardFromResponses(responses, questions),
     [responses, questions]
   );
+
+  const prevSessionModeRef = useRef(null);
+  useEffect(() => {
+    if (!meta?.mode) return;
+    if (prevSessionModeRef.current !== meta.mode) {
+      setQuestionVisibility(defaultQuestionVisibilityForMode(meta.mode));
+      prevSessionModeRef.current = meta.mode;
+    }
+  }, [meta?.mode]);
 
   const prevQuizPhaseRef = useRef(null);
   useEffect(() => {
     const phase = meta?.quizPhase;
     const prev = prevQuizPhaseRef.current;
     prevQuizPhaseRef.current = phase;
-    if (!meta || meta.mode !== MODES.QUIZ) return;
+    if (!meta || meta.mode !== MODES.QUIZ) return undefined;
     if (phase === QUIZ_PHASE.REVEALED && prev !== QUIZ_PHASE.REVEALED) {
       void burstConfetti(1);
     }
+    let cancelled = false;
     if (phase === QUIZ_PHASE.LEADERBOARD && prev !== QUIZ_PHASE.LEADERBOARD) {
-      void leaderboardConfetti();
+      void leaderboardConfetti().then((cancel) => {
+        if (cancelled) cancel?.();
+        else confettiCancelRef.current = cancel;
+      });
     }
-  }, [meta?.quizPhase, meta?.mode, meta]);
+    return () => {
+      cancelled = true;
+      confettiCancelRef.current?.();
+      confettiCancelRef.current = null;
+    };
+  }, [meta?.quizPhase, meta?.mode]);
+
+  useEffect(() => {
+    if (meta?.musicVolume == null) return;
+    setLocalMusicVol(Number(meta.musicVolume));
+  }, [meta?.musicVolume]);
 
   async function handleModeChange(mode) {
     await update(ref(db, roomMetaPath(roomCode)), {
       mode,
       quizPhase: QUIZ_PHASE.IDLE,
       quizOpenedAt: null,
+      quizFullMode: false,
     });
   }
 
@@ -233,18 +313,20 @@ export default function AdminDashboard() {
   }
 
   async function handleDeleteQuestion(questionId) {
-    await remove(ref(db, `${roomQuestionsPath(roomCode)}/${questionId}`));
-    await remove(ref(db, `${roomResponsesPath(roomCode)}/${questionId}`));
+    const patch = {
+      [`questions/${questionId}`]: null,
+      [`responses/${questionId}`]: null,
+    };
     if (meta?.activeQuestionId === questionId) {
-      await update(ref(db, roomMetaPath(roomCode)), { activeQuestionId: null });
+      patch['meta/activeQuestionId'] = null;
     }
     if (meta?.quizActiveQuestionId === questionId) {
-      await update(ref(db, roomMetaPath(roomCode)), {
-        quizActiveQuestionId: null,
-        quizPhase: QUIZ_PHASE.IDLE,
-        quizOpenedAt: null,
-      });
+      patch['meta/quizActiveQuestionId'] = null;
+      patch['meta/quizPhase'] = QUIZ_PHASE.IDLE;
+      patch['meta/quizOpenedAt'] = null;
+      patch['meta/quizFullMode'] = false;
     }
+    await update(ref(db, roomPath(roomCode)), patch);
   }
 
   async function handleAddQuestion(e) {
@@ -263,13 +345,9 @@ export default function AdminDashboard() {
     if (newType === QUESTION_TYPES.MCQ && options.length < 2) return;
 
     const isQuiz = meta.mode === MODES.QUIZ;
-    let ca = '';
-    if (isQuiz) {
-      ca = correctAnswer.trim();
-      if (!ca) {
-        alert('Quiz mode: set the correct answer before adding the question.');
-        return;
-      }
+    const ca = correctAnswer.trim();
+    const scoringEnabled = isQuiz && !!ca;
+    if (isQuiz && scoringEnabled) {
       if (!options.includes(ca) && newType !== QUESTION_TYPES.RATING) {
         alert('Correct answer must match one of the options.');
         return;
@@ -280,6 +358,8 @@ export default function AdminDashboard() {
     const id = qRef.key;
     const order =
       questionList.reduce((max, q) => Math.max(max, q.order ?? 0), 0) + 1;
+    const tMs = Math.min(600, Math.max(5, Number(timeLimitSec) || 30)) * 1000;
+    const quizId = meta.activeQuizId || 'default';
 
     await set(qRef, {
       id,
@@ -289,10 +369,13 @@ export default function AdminDashboard() {
       showNames: true,
       order,
       createdAt: Date.now(),
-      correctAnswer: isQuiz ? ca : '',
-      doublePoints: isQuiz ? !!doublePoints : false,
-      timeLimitMs: isQuiz ? Number(timeLimitMs) || 30000 : 30000,
+      correctAnswer: isQuiz && scoringEnabled ? ca : '',
+      doublePoints: isQuiz && scoringEnabled ? !!doublePoints : false,
+      timeLimitMs: isQuiz ? tMs : 30000,
+      scoringEnabled: isQuiz ? scoringEnabled : false,
       allowParticipantPdf: !!allowParticipantPdf,
+      visibility: questionVisibility,
+      quizId,
     });
 
     setNewText('');
@@ -300,9 +383,10 @@ export default function AdminDashboard() {
     setNewType(QUESTION_TYPES.MCQ);
     setCorrectAnswer('');
     setDoublePoints(false);
-    setTimeLimitMs(30000);
+    setTimeLimitSec(30);
     setAllowParticipantPdf(false);
-    await handleSetActive(id);
+    setQuestionVisibility(defaultQuestionVisibilityForMode(meta.mode));
+    if (meta.mode === MODES.LIVE_POLL) await handleSetActive(id);
   }
 
   async function handleWipeSession() {
@@ -322,14 +406,69 @@ export default function AdminDashboard() {
     await update(ref(db, roomMetaPath(roomCode)), { musicTrackId: id });
   }
 
-  async function handleMusicVolume(vol) {
+  async function flushMusicVolume(vol) {
     await update(ref(db, roomMetaPath(roomCode)), {
       musicVolume: Math.min(1, Math.max(0, vol)),
     });
   }
 
+  function handleMusicVolumeInput(vol) {
+    const clamped = Math.min(1, Math.max(0, vol));
+    setLocalMusicVol(clamped);
+    if (musicVolDebounceRef.current) clearTimeout(musicVolDebounceRef.current);
+    musicVolDebounceRef.current = setTimeout(() => {
+      void flushMusicVolume(clamped);
+    }, 400);
+  }
+
   async function handlePrivacyChange(priv) {
     await update(ref(db, roomMetaPath(roomCode)), { responsePrivacy: priv });
+  }
+
+  async function handleCommentPrivacy(priv) {
+    await update(ref(db, roomMetaPath(roomCode)), { commentPrivacy: priv });
+  }
+
+  async function handleCommentsHidden(hidden) {
+    await update(ref(db, roomMetaPath(roomCode)), { commentsHidden: !!hidden });
+  }
+
+  async function handleSetActiveQuiz(quizId) {
+    await update(ref(db, roomMetaPath(roomCode)), { activeQuizId: quizId });
+  }
+
+  async function handleAddQuiz(e) {
+    e.preventDefault();
+    const title = newQuizTitle.trim() || 'New quiz';
+    const id = generateId('qz');
+    const quizzes = {
+      ...(meta?.quizzes || {}),
+      [id]: { title, order: Object.keys(meta?.quizzes || {}).length },
+    };
+    await update(ref(db, roomMetaPath(roomCode)), {
+      quizzes,
+      activeQuizId: id,
+    });
+    setNewQuizTitle('');
+  }
+
+  async function handleReorderQuestion(questionId, delta) {
+    const list = questionListForActiveQuiz;
+    const idx = list.findIndex((q) => q.id === questionId);
+    const j = idx + delta;
+    if (idx < 0 || j < 0 || j >= list.length) return;
+    const a = list[idx];
+    const b = list[j];
+    const oa = a.order ?? idx;
+    const ob = b.order ?? j;
+    await update(ref(db, roomQuestionsPath(roomCode)), {
+      [`${a.id}/order`]: ob,
+      [`${b.id}/order`]: oa,
+    });
+  }
+
+  async function handleUpdateQuestion(questionId, patch) {
+    await update(ref(db, `${roomQuestionsPath(roomCode)}/${questionId}`), patch);
   }
 
   async function handleSessionStatus(status) {
@@ -342,16 +481,22 @@ export default function AdminDashboard() {
   }
 
   async function handleDownloadRoomJson() {
-    const snap = await get(ref(db, roomPath(roomCode)));
-    const blob = new Blob([JSON.stringify(snap.val(), null, 2)], {
-      type: 'application/json',
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `live-with-poll-room-${roomCode}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      const snap = await get(ref(db, roomPath(roomCode)));
+      const blob = new Blob([JSON.stringify(snap.val(), null, 2)], {
+        type: 'application/json',
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `live-with-poll-room-${roomCode}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+    }
   }
 
   function handleExportCsv() {
@@ -361,7 +506,22 @@ export default function AdminDashboard() {
     const a = document.createElement('a');
     a.href = url;
     a.download = `questions-${roomCode}.csv`;
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function handleDownloadDemoCsv() {
+    const csv = buildDemoCsv();
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `live-with-poll-demo.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }
 
@@ -377,6 +537,8 @@ export default function AdminDashboard() {
     }
     let orderBase =
       questionList.reduce((max, q) => Math.max(max, q.order ?? 0), 0) + 1;
+    let firstImportedId = null;
+    const quizId = meta.activeQuizId || 'default';
     for (const row of parsed.questions) {
       const opts =
         row.type === QUESTION_TYPES.MCQ && row.options.length
@@ -384,6 +546,11 @@ export default function AdminDashboard() {
           : defaultOptionsForType(row.type);
       const qRef = push(ref(db, roomQuestionsPath(roomCode)));
       const id = qRef.key;
+      if (!firstImportedId) firstImportedId = id;
+      const scoringEnabled =
+        meta.mode === MODES.QUIZ ? row.scoringEnabled !== false && !!String(row.correctAnswer || '').trim() : false;
+      const tMs =
+        row.timeLimitMs != null ? Number(row.timeLimitMs) || 30000 : 30000;
       await set(qRef, {
         id,
         text: row.text,
@@ -392,12 +559,19 @@ export default function AdminDashboard() {
         showNames: row.showNames,
         order: orderBase,
         createdAt: Date.now(),
-        correctAnswer: meta.mode === MODES.QUIZ ? row.correctAnswer : '',
-        doublePoints: meta.mode === MODES.QUIZ ? row.doublePoints : false,
-        timeLimitMs: 30000,
+        correctAnswer:
+          meta.mode === MODES.QUIZ && scoringEnabled ? row.correctAnswer : '',
+        doublePoints: meta.mode === MODES.QUIZ && scoringEnabled ? row.doublePoints : false,
+        timeLimitMs: tMs,
+        scoringEnabled: meta.mode === MODES.QUIZ ? !!scoringEnabled : false,
         allowParticipantPdf: row.allowParticipantPdf,
+        visibility: defaultQuestionVisibilityForMode(meta.mode),
+        quizId,
       });
       orderBase += 1;
+    }
+    if (firstImportedId && meta.mode === MODES.LIVE_POLL) {
+      await handleSetActive(firstImportedId);
     }
   }
 
@@ -408,12 +582,24 @@ export default function AdminDashboard() {
       quizActiveQuestionId: qid,
       quizPhase: QUIZ_PHASE.QUESTION,
       quizOpenedAt: Date.now(),
+      quizFullMode: false,
+    });
+  }
+
+  async function handleGoLiveFullQuiz() {
+    await update(ref(db, roomMetaPath(roomCode)), {
+      quizActiveQuestionId: null,
+      quizPhase: QUIZ_PHASE.QUESTION,
+      quizOpenedAt: Date.now(),
+      quizFullMode: true,
+      activeQuizId: meta.activeQuizId || 'default',
     });
   }
 
   async function handleRevealQuiz() {
     await update(ref(db, roomMetaPath(roomCode)), {
       quizPhase: QUIZ_PHASE.REVEALED,
+      quizFullMode: false,
     });
   }
 
@@ -427,7 +613,29 @@ export default function AdminDashboard() {
     await update(ref(db, roomMetaPath(roomCode)), {
       quizPhase: QUIZ_PHASE.IDLE,
       quizOpenedAt: null,
+      quizFullMode: false,
     });
+  }
+
+  async function copyParticipantLink() {
+    try {
+      await navigator.clipboard.writeText(participantRoomUrl(roomCode));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function openQrModal() {
+    setQrOpen(true);
+    setQrDataUrl('');
+    try {
+      const QR = await import('qrcode');
+      const url = participantRoomUrl(roomCode);
+      const dataUrl = await QR.default.toDataURL(url, { margin: 1, width: 280 });
+      setQrDataUrl(dataUrl);
+    } catch {
+      setQrDataUrl('');
+    }
   }
 
   if (authError === 'missing_token') {
@@ -476,11 +684,14 @@ export default function AdminDashboard() {
   const musicTrackId = meta.musicTrackId || 'off';
   const musicVolume =
     meta.musicVolume != null ? Number(meta.musicVolume) : DEFAULT_MUSIC_VOLUME;
+  const sliderVol = localMusicVol != null ? localMusicVol : musicVolume;
   const responsePrivacy = meta.responsePrivacy || RESPONSE_PRIVACY.PUBLIC;
+  const commentPrivacy = meta.commentPrivacy || COMMENT_PRIVACY.PUBLIC;
+  const quizzesMap = meta.quizzes || { default: { title: 'Quiz 1', order: 0 } };
 
   return (
     <div className="flex flex-col gap-6">
-      <MusicPlayer musicTrackId={musicTrackId} musicVolume={musicVolume} />
+      <MusicPlayer musicTrackId={musicTrackId} musicVolume={sliderVol} />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -499,8 +710,26 @@ export default function AdminDashboard() {
               /room/{roomCode}
             </a>
           </p>
+          <p className="mt-1 text-xs text-neutral-500">
+            Live presence:{' '}
+            <span className="font-semibold text-neutral-200">{presenceCount}</span> joined
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => void copyParticipantLink()}
+            className="glass-input rounded-xl px-3 py-2 text-xs font-semibold text-neutral-100"
+          >
+            Copy link
+          </button>
+          <button
+            type="button"
+            onClick={() => void openQrModal()}
+            className="glass-input rounded-xl px-3 py-2 text-xs font-semibold text-neutral-100"
+          >
+            QR code
+          </button>
           <button
             type="button"
             onClick={handleWipeSession}
@@ -544,8 +773,8 @@ export default function AdminDashboard() {
               min={0}
               max={1}
               step={0.05}
-              value={musicVolume}
-              onChange={(e) => handleMusicVolume(Number(e.target.value))}
+              value={sliderVol}
+              onChange={(e) => handleMusicVolumeInput(Number(e.target.value))}
               className="w-full accent-red-500"
             />
           </label>
@@ -585,6 +814,36 @@ export default function AdminDashboard() {
       {meta.mode === MODES.QUIZ ? (
         <GlassCard>
           <h2 className="text-sm font-semibold text-neutral-50">Quiz controls</h2>
+          <div className="mt-3 flex flex-col gap-3 rounded-xl border border-white/10 bg-white/5 p-3 sm:flex-row sm:flex-wrap sm:items-end">
+            <div className="flex-1">
+              <label className="text-xs text-neutral-500">Active quiz set</label>
+              <select
+                value={activeQuizId}
+                onChange={(e) => void handleSetActiveQuiz(e.target.value)}
+                className="glass-input mt-1 w-full rounded-xl px-3 py-2 text-sm text-neutral-100"
+              >
+                {Object.entries(quizzesMap).map(([id, qz]) => (
+                  <option key={id} value={id}>
+                    {(qz && qz.title) || id}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <form className="flex flex-1 flex-wrap items-end gap-2" onSubmit={handleAddQuiz}>
+              <input
+                value={newQuizTitle}
+                onChange={(e) => setNewQuizTitle(e.target.value)}
+                placeholder="New quiz title"
+                className="glass-input min-w-[8rem] flex-1 rounded-xl px-3 py-2 text-sm text-neutral-100"
+              />
+              <button
+                type="submit"
+                className="rounded-xl bg-red-800 px-3 py-2 text-xs font-semibold text-white"
+              >
+                Add quiz
+              </button>
+            </form>
+          </div>
           <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
             <div className="flex-1">
               <label className="text-xs text-neutral-500">Question to push</label>
@@ -593,7 +852,7 @@ export default function AdminDashboard() {
                 onChange={(e) => setQuizPushId(e.target.value)}
                 className="glass-input mt-1 w-full rounded-xl px-3 py-2 text-sm text-neutral-100"
               >
-                {questionList.map((q) => (
+                {questionListForActiveQuiz.map((q) => (
                   <option key={q.id} value={q.id}>
                     {q.text.slice(0, 64)}
                   </option>
@@ -606,6 +865,13 @@ export default function AdminDashboard() {
               className="rounded-xl bg-red-700 px-4 py-2 text-sm font-semibold text-white"
             >
               Push question (start timer)
+            </button>
+            <button
+              type="button"
+              onClick={handleGoLiveFullQuiz}
+              className="rounded-xl border border-amber-500/40 bg-amber-950/30 px-4 py-2 text-sm font-semibold text-amber-100"
+            >
+              Go live with full quiz
             </button>
             <button
               type="button"
@@ -662,6 +928,39 @@ export default function AdminDashboard() {
           </button>
           <button
             type="button"
+            onClick={() => handleCommentPrivacy(COMMENT_PRIVACY.PUBLIC)}
+            className={`rounded-xl px-3 py-2 text-xs font-semibold ${
+              commentPrivacy === COMMENT_PRIVACY.PUBLIC
+                ? 'bg-red-600 text-white'
+                : 'glass-input text-neutral-100'
+            }`}
+          >
+            Comments: public
+          </button>
+          <button
+            type="button"
+            onClick={() => handleCommentPrivacy(COMMENT_PRIVACY.PRIVATE)}
+            className={`rounded-xl px-3 py-2 text-xs font-semibold ${
+              commentPrivacy === COMMENT_PRIVACY.PRIVATE
+                ? 'bg-red-600 text-white'
+                : 'glass-input text-neutral-100'
+            }`}
+          >
+            Comments: private
+          </button>
+          <button
+            type="button"
+            onClick={() => handleCommentsHidden(!meta.commentsHidden)}
+            className={`rounded-xl px-3 py-2 text-xs font-semibold ${
+              meta.commentsHidden
+                ? 'bg-amber-700 text-white'
+                : 'glass-input text-neutral-100'
+            }`}
+          >
+            {meta.commentsHidden ? 'Comments hidden (user screen)' : 'Hide comments on user screen'}
+          </button>
+          <button
+            type="button"
             onClick={() =>
               handleSessionStatus(meta.sessionStatus === 'ended' ? 'live' : 'ended')
             }
@@ -713,6 +1012,13 @@ export default function AdminDashboard() {
               className="glass-input rounded-lg px-3 py-1.5 text-xs font-semibold text-neutral-100"
             >
               Import CSV
+            </button>
+            <button
+              type="button"
+              onClick={handleDownloadDemoCsv}
+              className="glass-input rounded-lg px-3 py-1.5 text-xs font-semibold text-neutral-100"
+            >
+              Download demo CSV
             </button>
             <input
               ref={csvInputRef}
@@ -821,19 +1127,40 @@ export default function AdminDashboard() {
                     Double points
                   </label>
                   <div>
-                    <label className="text-xs text-neutral-400">Timer window (ms)</label>
+                    <label className="text-xs text-neutral-400">Timer window (seconds)</label>
                     <input
                       type="number"
-                      min={5000}
-                      max={120000}
-                      step={1000}
-                      value={timeLimitMs}
-                      onChange={(e) => setTimeLimitMs(Number(e.target.value))}
+                      min={5}
+                      max={600}
+                      step={1}
+                      value={timeLimitSec}
+                      onChange={(e) => setTimeLimitSec(Number(e.target.value))}
                       className="glass-input mt-1 w-full rounded-xl px-3 py-2 text-sm text-neutral-100"
                     />
                   </div>
                 </div>
               ) : null}
+
+              <div>
+                <label className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+                  Question visibility
+                </label>
+                <select
+                  value={questionVisibility}
+                  onChange={(ev) => setQuestionVisibility(ev.target.value)}
+                  className="glass-input mt-1 w-full rounded-xl px-3 py-2 text-sm text-neutral-100"
+                >
+                  <option value={QUESTION_VISIBILITY.POLL}>Live poll only</option>
+                  <option value={QUESTION_VISIBILITY.QUIZ}>Quiz only</option>
+                  <option value={QUESTION_VISIBILITY.BOTH}>Poll + Quiz</option>
+                </select>
+                <p className="mt-1 text-[10px] text-neutral-500">
+                  New questions are tagged to the active quiz set:{' '}
+                  <span className="font-mono text-neutral-300">
+                    {(quizzesMap[activeQuizId] && quizzesMap[activeQuizId].title) || activeQuizId}
+                  </span>
+                </p>
+              </div>
 
               <label className="flex items-center gap-2 text-xs text-neutral-200">
                 <input
@@ -855,21 +1182,28 @@ export default function AdminDashboard() {
 
           <div className="mt-8 space-y-3">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
-              Your questions
+              Your questions ({(quizzesMap[activeQuizId] && quizzesMap[activeQuizId].title) || activeQuizId})
             </h3>
-            {questionList.length === 0 ? (
-              <p className="text-sm text-neutral-500">No questions yet.</p>
+            {questionListForActiveQuiz.length === 0 ? (
+              <p className="text-sm text-neutral-500">
+                No questions in this quiz set. Switch the active quiz or add questions.
+              </p>
             ) : (
-              questionList.map((q) => (
+              questionListForActiveQuiz.map((q, idx) => (
                 <QuestionCard
                   key={q.id}
                   question={q}
                   sessionMode={meta.mode}
                   isActive={meta.activeQuestionId === q.id}
                   isQuizFocus={meta.quizActiveQuestionId === q.id}
+                  index={idx}
+                  total={questionListForActiveQuiz.length}
                   onTogglePrivacy={handleTogglePrivacy}
                   onSelectActive={handleSetActive}
                   onDelete={handleDeleteQuestion}
+                  onUpdate={handleUpdateQuestion}
+                  onMoveUp={(id) => void handleReorderQuestion(id, -1)}
+                  onMoveDown={(id) => void handleReorderQuestion(id, 1)}
                 />
               ))
             )}
@@ -940,26 +1274,30 @@ export default function AdminDashboard() {
           <GlassCard>
             <h2 className="mb-3 text-sm font-semibold text-neutral-50">Live response feed</h2>
             <ul className="max-h-56 space-y-2 overflow-y-auto text-xs">
-              {recentResponses.length === 0 ? (
+              {feedRows.length === 0 ? (
                 <li className="text-neutral-500">Waiting for responses…</li>
               ) : (
-                recentResponses.map((r) => (
-                  <li
-                    key={r.key}
-                    className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5"
-                  >
-                    <span className="font-semibold text-neutral-100">
-                      {r.showNames ? r.displayName || 'Participant' : 'Anonymous'}
-                    </span>
-                    <span className="text-neutral-500"> · </span>
-                    <span className="text-neutral-400">{r.qText}</span>
-                    <span className="text-neutral-500"> → </span>
-                    <span className="text-red-300">{String(r.answer)}</span>
-                    {r.pointsEarned != null ? (
-                      <span className="text-neutral-500"> · {r.pointsEarned} pts</span>
-                    ) : null}
-                  </li>
-                ))
+                feedRows.map((r) => {
+                  const q = questions[r.questionId];
+                  const showNames = q?.showNames !== false;
+                  return (
+                    <li
+                      key={r.id}
+                      className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5"
+                    >
+                      <span className="font-semibold text-neutral-100">
+                        {showNames ? r.displayName || 'Participant' : 'Anonymous'}
+                      </span>
+                      <span className="text-neutral-500"> · </span>
+                      <span className="text-neutral-400">{q?.text || 'Question'}</span>
+                      <span className="text-neutral-500"> → </span>
+                      <span className="text-red-300">{String(r.answer)}</span>
+                      {r.pointsEarned != null ? (
+                        <span className="text-neutral-500"> · {r.pointsEarned} pts</span>
+                      ) : null}
+                    </li>
+                  );
+                })
               )}
             </ul>
           </GlassCard>
@@ -974,6 +1312,34 @@ export default function AdminDashboard() {
           ) : null}
         </div>
       </div>
+
+      {qrOpen ? (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4"
+          role="presentation"
+          onClick={() => setQrOpen(false)}
+        >
+          <GlassCard
+            className="relative max-w-sm !p-6 text-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm font-semibold text-neutral-50">Join this room</p>
+            <p className="mt-1 break-all text-xs text-neutral-400">{participantRoomUrl(roomCode)}</p>
+            {qrDataUrl ? (
+              <img src={qrDataUrl} alt="" className="mx-auto mt-4 h-56 w-56 rounded-lg bg-white p-2" />
+            ) : (
+              <p className="mt-6 text-xs text-neutral-500">Generating…</p>
+            )}
+            <button
+              type="button"
+              onClick={() => setQrOpen(false)}
+              className="mt-4 rounded-xl bg-neutral-800 px-4 py-2 text-xs font-semibold text-white"
+            >
+              Close
+            </button>
+          </GlassCard>
+        </div>
+      ) : null}
     </div>
   );
 }
