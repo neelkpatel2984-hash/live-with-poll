@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+
+  body {
+    @apply min-h-screen text-neutral-100;
+    background-color: #030303;
+    background-image:
+      radial-gradient(ellipse 120% 80% at 50% -20%, rgba(220, 38, 38, 0.22), transparent 55%),
+      radial-gradient(ellipse 80% 50% at 100% 50%, rgba(185, 28, 28, 0.12), transparent 45%),
+      radial-gradient(ellipse 70% 60% at 0% 80%, rgba(127, 29, 29, 0.14), transparent 50%);
+    background-attachment: fixed;
+  }
+
+  #root {
+    @apply min-h-screen;
+  }
+
+  .light body {
+    background-color: #0a0a0a;
+    background-image:
+      radial-gradient(ellipse 120% 80% at 50% -20%, rgba(248, 113, 113, 0.18), transparent 55%),
+      radial-gradient(ellipse 80% 50% at 100% 50%, rgba(185, 28, 28, 0.1), transparent 45%),
+      radial-gradient(ellipse 70% 60% at 0% 80%, rgba(127, 29, 29, 0.12), transparent 50%);
+    background-attachment: fixed;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@keyframes emoji-fizz-up {
+  0% {
+    transform: translate3d(0, 0, 0) scale(0.85);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(var(--fizz-drift, 0px), -110vh, 0) scale(1.15);
+    opacity: 0;
+  }
+}
+
+.emoji-fizz {
+  --fizz-drift: 0px;
+  animation-name: emoji-fizz-up;
+  animation-timing-function: ease-out;
+  animation-fill-mode: forwards;
+}

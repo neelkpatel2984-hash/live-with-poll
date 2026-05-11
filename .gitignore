@@ -1,5 +1,7 @@
 node_modules
 dist
+apps/participant/dist
+apps/host/dist
 .env
 *.local
 .DS_Store
