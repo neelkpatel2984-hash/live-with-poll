@@ -7,6 +7,9 @@
     "apps/participant",
     "apps/host"
   ],
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "dev:participant": "npm run dev -w live-with-poll-participant",
     "dev:host": "npm run dev -w live-with-poll-host",
