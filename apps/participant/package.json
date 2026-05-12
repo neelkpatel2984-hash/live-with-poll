@@ -19,6 +19,9 @@
     "react-router-dom": "^6.28.0",
     "recharts": "^2.13.3"
   },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-x64-gnu": "4.60.3"
+  },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.3",
     "autoprefixer": "^10.4.20",
