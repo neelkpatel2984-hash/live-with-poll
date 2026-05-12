@@ -65,17 +65,18 @@ export default function EmojiFizzLayer({ roomCode, enabled }) {
         return (
           <span
             key={p.id}
-            className="pointer-events-none fixed bottom-0 z-[61] text-3xl leading-none sm:text-4xl"
+            className="pointer-events-none fixed bottom-0 z-[61] text-4xl leading-none sm:text-5xl md:text-6xl"
             style={{
               left: `${x}%`,
               transform: 'translateX(-50%)',
             }}
           >
             <span
-              className="emoji-fizz inline-block drop-shadow-lg"
+              className="emoji-fizz inline-block drop-shadow-2xl animate-pulse"
               style={{
                 animationDuration: `${duration}s`,
                 ['--fizz-drift']: `${drift}px`,
+                filter: 'drop-shadow(0 0 20px rgba(255, 100, 100, 0.8)) drop-shadow(0 0 40px rgba(255, 150, 150, 0.4))',
               }}
             >
               {p.emoji}

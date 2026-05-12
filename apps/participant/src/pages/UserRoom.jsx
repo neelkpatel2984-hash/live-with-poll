@@ -400,23 +400,15 @@ export default function UserRoom() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <p className="text-xs uppercase tracking-wide text-neutral-500">You are in</p>
-            <h1 className="text-xl font-bold text-neutral-50">
-              Room <span className="text-red-400">{roomCode}</span>
+            <h1 className="text-xl font-bold text-neutral-50 red-glow-text">
+              Room <span className="text-red-400 font-mono">{roomCode}</span>
             </h1>
             <p className="text-sm text-neutral-400">
               Hi, {displayName}. Mode:{' '}
               <span className="font-semibold text-neutral-200">{meta.mode}</span>
             </p>
           </div>
-          <div className="flex gap-2">
-            <BackButton to="/">Back</BackButton>
-            <Link
-              to="/"
-              className="glass-input rounded-lg px-3 py-1.5 text-xs font-semibold text-neutral-100 no-underline"
-            >
-              Leave
-            </Link>
-          </div>
+          <BackButton to="/">Leave Room</BackButton>
         </div>
       </GlassCard>
 

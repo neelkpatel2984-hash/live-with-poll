@@ -60,22 +60,22 @@ export default function LiveResults({ question, responses }) {
     question.type === QUESTION_TYPES.TRUE_FALSE;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 relative z-10">
       <div className="flex flex-wrap items-end justify-between gap-2">
-        <div>
+        <div className="min-w-0 flex-1">
           <p className="text-xs uppercase tracking-wide text-neutral-500">
             Live results
           </p>
-          <p className="text-sm font-medium text-neutral-100">
+          <p className="text-sm font-medium text-neutral-100 truncate">
             {question.text}
           </p>
         </div>
-        <p className="text-xs text-neutral-500">
+        <p className="text-xs text-neutral-500 flex-shrink-0">
           {total} response{total === 1 ? '' : 's'}
         </p>
       </div>
 
-      <div className="h-64 w-full min-h-[240px]">
+      <div className="h-64 w-full min-h-[240px] relative z-20">
         <ResponsiveContainer width="100%" height="100%">
           {usePie ? (
             <PieChart>

@@ -92,6 +92,11 @@ export default function AdminDashboard() {
     live_poll: true,
     quiz: true,
   });
+  const [setPdfDownloads, setSetPdfDownloads] = useState({
+    quiz: {},
+    form: {},
+    livePoll: {},
+  });
   const [filterListByActiveSet, setFilterListByActiveSet] = useState(true);
   const [selectedQuestionId, setSelectedQuestionId] = useState(null);
   const [addPanelOpen, setAddPanelOpen] = useState(true);
@@ -658,6 +663,39 @@ export default function AdminDashboard() {
     }
   }
 
+  async function handleDownloadSetPdf(setType, setId) {
+    try {
+      const { buildHostPdf } = await import('@shared/utils/pdfHost.js');
+      const setQuestions = questionList.filter((q) => {
+        if (setType === 'quiz') return (q.quizId ?? 'default') === setId;
+        if (setType === 'form') return (q.formId ?? 'default') === setId;
+        if (setType === 'livePoll') return (q.livePollId ?? 'default') === setId;
+        return false;
+      });
+
+      const setResponses = {};
+      setQuestions.forEach((q) => {
+        setResponses[q.id] = responses[q.id] || {};
+      });
+
+      const doc = buildHostPdf({
+        title: `Live with Poll — ${setType} set`,
+        mode: meta.mode,
+        roomCode,
+        questions: setQuestions,
+        responsesByQuestionId: setResponses,
+        setType,
+        setTitle: setType === 'quiz' ? quizzesMap[setId]?.title || setId :
+                  setType === 'form' ? formsMap[setId]?.title || setId :
+                  livePollsMap[setId]?.title || setId,
+      });
+      doc.save(`live-with-poll-${roomCode}-${setType}-${setId}.pdf`);
+    } catch (e) {
+      console.error('PDF generation failed:', e);
+      alert('PDF generation failed. Please try again.');
+    }
+  }
+
   async function handlePushQuizQuestion() {
     const qid = quizPushId;
     if (!qid) return;
@@ -794,8 +832,8 @@ export default function AdminDashboard() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-wide text-neutral-500">Host dashboard</p>
-          <h1 className="text-2xl font-bold text-neutral-50">
-            Room <span className="text-red-400">{roomCode}</span>
+          <h1 className="text-2xl font-bold text-neutral-50 red-glow-text">
+            Room <span className="text-red-400 font-mono">{roomCode}</span>
           </h1>
           <p className="mt-1 text-sm text-neutral-400">
             Participant URL:{' '}
@@ -831,7 +869,7 @@ export default function AdminDashboard() {
           <button
             type="button"
             onClick={handleWipeSession}
-            className="rounded-xl border border-red-500/50 px-3 py-2 text-xs font-semibold text-red-200 hover:bg-red-950/50"
+            className="futuristic-button rounded-xl border border-red-500/50 px-3 py-2 text-xs font-semibold text-red-200 hover:bg-red-950/50 glow-pulse"
           >
             Wipe session
           </button>
@@ -944,6 +982,28 @@ export default function AdminDashboard() {
                 Add form set
               </button>
             </form>
+            <div className="flex items-center gap-3">
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-neutral-200">
+                <input
+                  type="checkbox"
+                  checked={setPdfDownloads.form[activeFormId] || false}
+                  onChange={(e) => setSetPdfDownloads(prev => ({
+                    ...prev,
+                    form: { ...prev.form, [activeFormId]: e.target.checked }
+                  }))}
+                />
+                Allow PDF
+              </label>
+              {setPdfDownloads.form[activeFormId] && (
+                <button
+                  type="button"
+                  onClick={() => handleDownloadSetPdf('form', activeFormId)}
+                  className="rounded-xl bg-amber-600 px-3 py-2 text-xs font-semibold text-white"
+                >
+                  Download PDF
+                </button>
+              )}
+            </div>
           </div>
         </GlassCard>
       ) : null}
@@ -984,6 +1044,28 @@ export default function AdminDashboard() {
                 Add live poll set
               </button>
             </form>
+            <div className="flex items-center gap-3">
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-neutral-200">
+                <input
+                  type="checkbox"
+                  checked={setPdfDownloads.livePoll[activeLivePollId] || false}
+                  onChange={(e) => setSetPdfDownloads(prev => ({
+                    ...prev,
+                    livePoll: { ...prev.livePoll, [activeLivePollId]: e.target.checked }
+                  }))}
+                />
+                Allow PDF
+              </label>
+              {setPdfDownloads.livePoll[activeLivePollId] && (
+                <button
+                  type="button"
+                  onClick={() => handleDownloadSetPdf('livePoll', activeLivePollId)}
+                  className="rounded-xl bg-amber-600 px-3 py-2 text-xs font-semibold text-white"
+                >
+                  Download PDF
+                </button>
+              )}
+            </div>
           </div>
         </GlassCard>
       ) : null}
@@ -1020,6 +1102,28 @@ export default function AdminDashboard() {
                 Add quiz
               </button>
             </form>
+            <div className="flex items-center gap-3">
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-neutral-200">
+                <input
+                  type="checkbox"
+                  checked={setPdfDownloads.quiz[activeQuizId] || false}
+                  onChange={(e) => setSetPdfDownloads(prev => ({
+                    ...prev,
+                    quiz: { ...prev.quiz, [activeQuizId]: e.target.checked }
+                  }))}
+                />
+                Allow PDF
+              </label>
+              {setPdfDownloads.quiz[activeQuizId] && (
+                <button
+                  type="button"
+                  onClick={() => handleDownloadSetPdf('quiz', activeQuizId)}
+                  className="rounded-xl bg-amber-600 px-3 py-2 text-xs font-semibold text-white"
+                >
+                  Download PDF
+                </button>
+              )}
+            </div>
           </div>
           <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
             <div className="flex-1">
@@ -1322,37 +1426,42 @@ export default function AdminDashboard() {
                 <label className="text-xs font-medium uppercase tracking-wide text-neutral-500">
                   Show this question in which modes?
                 </label>
-                <div className="mt-2 flex flex-wrap gap-4 text-xs text-neutral-200">
-                  <label className="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={visibleModesBox.form}
-                      onChange={(e) =>
-                        setVisibleModesBox((b) => ({ ...b, form: e.target.checked }))
-                      }
-                    />
-                    Form
-                  </label>
-                  <label className="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={visibleModesBox.live_poll}
-                      onChange={(e) =>
-                        setVisibleModesBox((b) => ({ ...b, live_poll: e.target.checked }))
-                      }
-                    />
-                    Live poll
-                  </label>
-                  <label className="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={visibleModesBox.quiz}
-                      onChange={(e) =>
-                        setVisibleModesBox((b) => ({ ...b, quiz: e.target.checked }))
-                      }
-                    />
-                    Quiz
-                  </label>
+                <div className="mt-3 space-y-2">
+                  <div className="flex flex-wrap gap-3 rounded-lg border border-white/10 bg-white/5 p-3">
+                    <label className="flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-xs font-medium text-neutral-200 transition-all hover:bg-white/10">
+                      <input
+                        type="checkbox"
+                        checked={visibleModesBox.form}
+                        onChange={(e) =>
+                          setVisibleModesBox((b) => ({ ...b, form: e.target.checked }))
+                        }
+                        className="w-4 h-4 rounded border-2 border-red-400 bg-transparent text-red-500 focus:ring-2 focus:ring-red-400 focus:ring-offset-2 focus:ring-offset-transparent"
+                      />
+                      <span className="select-none">Form</span>
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-xs font-medium text-neutral-200 transition-all hover:bg-white/10">
+                      <input
+                        type="checkbox"
+                        checked={visibleModesBox.live_poll}
+                        onChange={(e) =>
+                          setVisibleModesBox((b) => ({ ...b, live_poll: e.target.checked }))
+                        }
+                        className="w-4 h-4 rounded border-2 border-red-400 bg-transparent text-red-500 focus:ring-2 focus:ring-red-400 focus:ring-offset-2 focus:ring-offset-transparent"
+                      />
+                      <span className="select-none">Live Poll</span>
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-xs font-medium text-neutral-200 transition-all hover:bg-white/10">
+                      <input
+                        type="checkbox"
+                        checked={visibleModesBox.quiz}
+                        onChange={(e) =>
+                          setVisibleModesBox((b) => ({ ...b, quiz: e.target.checked }))
+                        }
+                        className="w-4 h-4 rounded border-2 border-red-400 bg-transparent text-red-500 focus:ring-2 focus:ring-red-400 focus:ring-offset-2 focus:ring-offset-transparent"
+                      />
+                      <span className="select-none">Quiz</span>
+                    </label>
+                  </div>
                 </div>
                 <p className="mt-2 text-[10px] text-neutral-500">
                   New questions are filed under the active set for this mode (quiz / form / live poll).
@@ -1360,15 +1469,7 @@ export default function AdminDashboard() {
                 </p>
               </div>
 
-              <label className="flex items-center gap-2 text-xs text-neutral-200">
-                <input
-                  type="checkbox"
-                  checked={allowParticipantPdf}
-                  onChange={(e) => setAllowParticipantPdf(e.target.checked)}
-                />
-                Participants can download responses (Form / Quiz, after session ends)
-              </label>
-
+              
               <button
                 type="submit"
                 className="w-full rounded-xl bg-gradient-to-r from-red-700 to-red-500 px-4 py-2.5 text-sm font-semibold text-white shadow-md"
@@ -1379,7 +1480,7 @@ export default function AdminDashboard() {
           ) : null}
 
           <div className="mt-8 space-y-3">
-            <div className="flex flex-col gap-2 border-b border-white/10 pb-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 border-b border-white/10 pb-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
                 Your questions
                 <span className="mt-0.5 block font-normal normal-case text-neutral-400">
@@ -1393,13 +1494,14 @@ export default function AdminDashboard() {
                   )}
                 </span>
               </h3>
-              <label className="flex cursor-pointer items-center gap-2 text-xs text-neutral-300">
+              <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-red-400/30 bg-red-950/20 px-4 py-2 text-xs font-medium text-neutral-200 transition-all hover:bg-red-950/30 hover:border-red-400/50">
                 <input
                   type="checkbox"
                   checked={filterListByActiveSet}
                   onChange={(e) => setFilterListByActiveSet(e.target.checked)}
+                  className="w-4 h-4 rounded border-2 border-red-400 bg-transparent text-red-500 focus:ring-2 focus:ring-red-400 focus:ring-offset-2 focus:ring-offset-transparent"
                 />
-                Only this set (filter list)
+                <span className="select-none">Only this set</span>
               </label>
             </div>
             {questionListForPanel.length === 0 ? (
