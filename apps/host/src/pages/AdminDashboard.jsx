@@ -33,9 +33,9 @@ import {
   aggregateLeaderboardFromResponses,
   readHostCredential,
   adminStorageKey,
-  QUESTION_VISIBILITY,
-  defaultQuestionVisibilityForMode,
   generateId,
+  defaultVisibleModesCheckboxes,
+  visibleModesFromCheckboxes,
 } from '@shared/utils/helpers.js';
 import {
   exportQuestionsToCsv,
@@ -87,7 +87,12 @@ export default function AdminDashboard() {
   const [doublePoints, setDoublePoints] = useState(false);
   const [timeLimitSec, setTimeLimitSec] = useState(30);
   const [allowParticipantPdf, setAllowParticipantPdf] = useState(false);
-  const [questionVisibility, setQuestionVisibility] = useState(QUESTION_VISIBILITY.BOTH);
+  const [visibleModesBox, setVisibleModesBox] = useState({
+    form: true,
+    live_poll: true,
+    quiz: true,
+  });
+  const [filterListByActiveSet, setFilterListByActiveSet] = useState(true);
   const [selectedQuestionId, setSelectedQuestionId] = useState(null);
   const [addPanelOpen, setAddPanelOpen] = useState(true);
   const [chartView, setChartView] = useState('per');
@@ -98,6 +103,8 @@ export default function AdminDashboard() {
   const [qrOpen, setQrOpen] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [newQuizTitle, setNewQuizTitle] = useState('');
+  const [newFormTitle, setNewFormTitle] = useState('');
+  const [newLivePollTitle, setNewLivePollTitle] = useState('');
   const csvInputRef = useRef(null);
   const musicVolDebounceRef = useRef(null);
   const confettiCancelRef = useRef(null);
@@ -198,10 +205,27 @@ export default function AdminDashboard() {
   const questionList = useMemo(() => sortedQuestions(questions), [questions]);
 
   const activeQuizId = meta?.activeQuizId ?? 'default';
-  const questionListForActiveQuiz = useMemo(
-    () => questionList.filter((q) => (q.quizId ?? 'default') === activeQuizId),
-    [questionList, activeQuizId]
-  );
+  const activeFormId = meta?.activeFormId ?? 'default';
+  const activeLivePollId = meta?.activeLivePollId ?? 'default';
+
+  const questionListForActiveSet = useMemo(() => {
+    if (!meta) return questionList;
+    if (meta.mode === MODES.QUIZ) {
+      return questionList.filter((q) => (q.quizId ?? 'default') === activeQuizId);
+    }
+    if (meta.mode === MODES.FORM) {
+      return questionList.filter((q) => (q.formId ?? 'default') === activeFormId);
+    }
+    if (meta.mode === MODES.LIVE_POLL) {
+      return questionList.filter((q) => (q.livePollId ?? 'default') === activeLivePollId);
+    }
+    return questionList;
+  }, [questionList, meta, activeQuizId, activeFormId, activeLivePollId]);
+
+  const questionListForPanel = useMemo(() => {
+    if (!filterListByActiveSet) return questionList;
+    return questionListForActiveSet;
+  }, [filterListByActiveSet, questionList, questionListForActiveSet]);
 
   useEffect(() => {
     if (!questionList.length) {
@@ -216,31 +240,40 @@ export default function AdminDashboard() {
       setSelectedQuestionId(meta.activeQuestionId);
       return;
     }
+    const pool =
+      filterListByActiveSet && questionListForPanel.length
+        ? questionListForPanel
+        : questionList;
     setSelectedQuestionId((prev) =>
-      prev && questionList.some((q) => q.id === prev)
-        ? prev
-        : questionList[0].id
+      prev && pool.some((q) => q.id === prev) ? prev : pool[0]?.id ?? null
     );
-  }, [questionList, meta?.activeQuestionId, meta?.mode]);
+  }, [
+    questionList,
+    questionListForPanel,
+    filterListByActiveSet,
+    meta?.activeQuestionId,
+    meta?.mode,
+  ]);
 
   useEffect(() => {
-    if (!questionListForActiveQuiz.length) {
+    if (meta?.mode !== MODES.QUIZ) return undefined;
+    const list = questionListForActiveSet;
+    if (!list.length) {
       setQuizPushId(null);
-      return;
+      return undefined;
     }
     if (
       meta?.quizActiveQuestionId &&
-      questionListForActiveQuiz.some((q) => q.id === meta.quizActiveQuestionId)
+      list.some((q) => q.id === meta.quizActiveQuestionId)
     ) {
       setQuizPushId(meta.quizActiveQuestionId);
-      return;
+      return undefined;
     }
     setQuizPushId((prev) =>
-      prev && questionListForActiveQuiz.some((q) => q.id === prev)
-        ? prev
-        : questionListForActiveQuiz[0].id
+      prev && list.some((q) => q.id === prev) ? prev : list[0].id
     );
-  }, [questionListForActiveQuiz, meta?.quizActiveQuestionId]);
+    return undefined;
+  }, [questionListForActiveSet, meta?.quizActiveQuestionId, meta?.mode]);
 
   const selectedQuestion =
     questionList.find((q) => q.id === selectedQuestionId) || null;
@@ -257,7 +290,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (!meta?.mode) return;
     if (prevSessionModeRef.current !== meta.mode) {
-      setQuestionVisibility(defaultQuestionVisibilityForMode(meta.mode));
+      setVisibleModesBox(defaultVisibleModesCheckboxes(meta.mode));
       prevSessionModeRef.current = meta.mode;
     }
   }, [meta?.mode]);
@@ -360,6 +393,9 @@ export default function AdminDashboard() {
       questionList.reduce((max, q) => Math.max(max, q.order ?? 0), 0) + 1;
     const tMs = Math.min(600, Math.max(5, Number(timeLimitSec) || 30)) * 1000;
     const quizId = meta.activeQuizId || 'default';
+    const formId = meta.activeFormId || 'default';
+    const livePollId = meta.activeLivePollId || 'default';
+    const visibleModes = visibleModesFromCheckboxes(visibleModesBox);
 
     await set(qRef, {
       id,
@@ -374,8 +410,10 @@ export default function AdminDashboard() {
       timeLimitMs: isQuiz ? tMs : 30000,
       scoringEnabled: isQuiz ? scoringEnabled : false,
       allowParticipantPdf: !!allowParticipantPdf,
-      visibility: questionVisibility,
+      visibleModes,
       quizId,
+      formId,
+      livePollId,
     });
 
     setNewText('');
@@ -385,7 +423,7 @@ export default function AdminDashboard() {
     setDoublePoints(false);
     setTimeLimitSec(30);
     setAllowParticipantPdf(false);
-    setQuestionVisibility(defaultQuestionVisibilityForMode(meta.mode));
+    setVisibleModesBox(defaultVisibleModesCheckboxes(meta.mode));
     if (meta.mode === MODES.LIVE_POLL) await handleSetActive(id);
   }
 
@@ -437,6 +475,44 @@ export default function AdminDashboard() {
     await update(ref(db, roomMetaPath(roomCode)), { activeQuizId: quizId });
   }
 
+  async function handleSetActiveForm(formId) {
+    await update(ref(db, roomMetaPath(roomCode)), { activeFormId: formId });
+  }
+
+  async function handleAddForm(e) {
+    e.preventDefault();
+    const title = newFormTitle.trim() || 'New form';
+    const id = generateId('fm');
+    const forms = {
+      ...(meta?.forms || {}),
+      [id]: { title, order: Object.keys(meta?.forms || {}).length },
+    };
+    await update(ref(db, roomMetaPath(roomCode)), {
+      forms,
+      activeFormId: id,
+    });
+    setNewFormTitle('');
+  }
+
+  async function handleSetActiveLivePoll(pollId) {
+    await update(ref(db, roomMetaPath(roomCode)), { activeLivePollId: pollId });
+  }
+
+  async function handleAddLivePollSet(e) {
+    e.preventDefault();
+    const title = newLivePollTitle.trim() || 'New live poll set';
+    const id = generateId('lp');
+    const livePolls = {
+      ...(meta?.livePolls || {}),
+      [id]: { title, order: Object.keys(meta?.livePolls || {}).length },
+    };
+    await update(ref(db, roomMetaPath(roomCode)), {
+      livePolls,
+      activeLivePollId: id,
+    });
+    setNewLivePollTitle('');
+  }
+
   async function handleAddQuiz(e) {
     e.preventDefault();
     const title = newQuizTitle.trim() || 'New quiz';
@@ -453,7 +529,7 @@ export default function AdminDashboard() {
   }
 
   async function handleReorderQuestion(questionId, delta) {
-    const list = questionListForActiveQuiz;
+    const list = questionListForPanel;
     const idx = list.findIndex((q) => q.id === questionId);
     const j = idx + delta;
     if (idx < 0 || j < 0 || j >= list.length) return;
@@ -539,6 +615,11 @@ export default function AdminDashboard() {
       questionList.reduce((max, q) => Math.max(max, q.order ?? 0), 0) + 1;
     let firstImportedId = null;
     const quizId = meta.activeQuizId || 'default';
+    const formId = meta.activeFormId || 'default';
+    const livePollId = meta.activeLivePollId || 'default';
+    const importedVisibleModes = visibleModesFromCheckboxes(
+      defaultVisibleModesCheckboxes(meta.mode)
+    );
     for (const row of parsed.questions) {
       const opts =
         row.type === QUESTION_TYPES.MCQ && row.options.length
@@ -565,8 +646,10 @@ export default function AdminDashboard() {
         timeLimitMs: tMs,
         scoringEnabled: meta.mode === MODES.QUIZ ? !!scoringEnabled : false,
         allowParticipantPdf: row.allowParticipantPdf,
-        visibility: defaultQuestionVisibilityForMode(meta.mode),
+        visibleModes: importedVisibleModes,
         quizId,
+        formId,
+        livePollId,
       });
       orderBase += 1;
     }
@@ -688,6 +771,21 @@ export default function AdminDashboard() {
   const responsePrivacy = meta.responsePrivacy || RESPONSE_PRIVACY.PUBLIC;
   const commentPrivacy = meta.commentPrivacy || COMMENT_PRIVACY.PUBLIC;
   const quizzesMap = meta.quizzes || { default: { title: 'Quiz 1', order: 0 } };
+  const formsMap = meta.forms || { default: { title: 'Form 1', order: 0 } };
+  const livePollsMap = meta.livePolls || { default: { title: 'Live poll 1', order: 0 } };
+  const activeSetLabel =
+    meta.mode === MODES.QUIZ
+      ? quizzesMap[activeQuizId]?.title || activeQuizId
+      : meta.mode === MODES.FORM
+        ? formsMap[activeFormId]?.title || activeFormId
+        : meta.mode === MODES.LIVE_POLL
+          ? livePollsMap[activeLivePollId]?.title || activeLivePollId
+          : 'All sets';
+
+  const chartQuestionPickList =
+    filterListByActiveSet && questionListForPanel.length
+      ? questionListForPanel
+      : questionList;
 
   return (
     <div className="flex flex-col gap-6">
@@ -811,6 +909,85 @@ export default function AdminDashboard() {
         </p>
       </GlassCard>
 
+      {meta.mode === MODES.FORM ? (
+        <GlassCard>
+          <h2 className="text-sm font-semibold text-neutral-50">Form sets</h2>
+          <p className="mt-1 text-xs text-neutral-500">
+            Group questions like quizzes. Participants in Form mode only see the active set.
+          </p>
+          <div className="mt-3 flex flex-col gap-3 rounded-xl border border-white/10 bg-white/5 p-3 sm:flex-row sm:flex-wrap sm:items-end">
+            <div className="flex-1">
+              <label className="text-xs text-neutral-500">Active form set</label>
+              <select
+                value={activeFormId}
+                onChange={(e) => void handleSetActiveForm(e.target.value)}
+                className="glass-input mt-1 w-full rounded-xl px-3 py-2 text-sm text-neutral-100"
+              >
+                {Object.entries(formsMap).map(([id, f]) => (
+                  <option key={id} value={id}>
+                    {(f && f.title) || id}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <form className="flex flex-1 flex-wrap items-end gap-2" onSubmit={handleAddForm}>
+              <input
+                value={newFormTitle}
+                onChange={(e) => setNewFormTitle(e.target.value)}
+                placeholder="New form set title"
+                className="glass-input min-w-[8rem] flex-1 rounded-xl px-3 py-2 text-sm text-neutral-100"
+              />
+              <button
+                type="submit"
+                className="rounded-xl bg-red-800 px-3 py-2 text-xs font-semibold text-white"
+              >
+                Add form set
+              </button>
+            </form>
+          </div>
+        </GlassCard>
+      ) : null}
+
+      {meta.mode === MODES.LIVE_POLL ? (
+        <GlassCard>
+          <h2 className="text-sm font-semibold text-neutral-50">Live poll sets</h2>
+          <p className="mt-1 text-xs text-neutral-500">
+            Multiple rounds (e.g. Poll 1, Poll 2). Only the active set’s questions appear in the list
+            below when filtered.
+          </p>
+          <div className="mt-3 flex flex-col gap-3 rounded-xl border border-white/10 bg-white/5 p-3 sm:flex-row sm:flex-wrap sm:items-end">
+            <div className="flex-1">
+              <label className="text-xs text-neutral-500">Active live poll set</label>
+              <select
+                value={activeLivePollId}
+                onChange={(e) => void handleSetActiveLivePoll(e.target.value)}
+                className="glass-input mt-1 w-full rounded-xl px-3 py-2 text-sm text-neutral-100"
+              >
+                {Object.entries(livePollsMap).map(([id, p]) => (
+                  <option key={id} value={id}>
+                    {(p && p.title) || id}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <form className="flex flex-1 flex-wrap items-end gap-2" onSubmit={handleAddLivePollSet}>
+              <input
+                value={newLivePollTitle}
+                onChange={(e) => setNewLivePollTitle(e.target.value)}
+                placeholder="New live poll set title"
+                className="glass-input min-w-[8rem] flex-1 rounded-xl px-3 py-2 text-sm text-neutral-100"
+              />
+              <button
+                type="submit"
+                className="rounded-xl bg-red-800 px-3 py-2 text-xs font-semibold text-white"
+              >
+                Add live poll set
+              </button>
+            </form>
+          </div>
+        </GlassCard>
+      ) : null}
+
       {meta.mode === MODES.QUIZ ? (
         <GlassCard>
           <h2 className="text-sm font-semibold text-neutral-50">Quiz controls</h2>
@@ -852,7 +1029,7 @@ export default function AdminDashboard() {
                 onChange={(e) => setQuizPushId(e.target.value)}
                 className="glass-input mt-1 w-full rounded-xl px-3 py-2 text-sm text-neutral-100"
               >
-                {questionListForActiveQuiz.map((q) => (
+                {questionListForActiveSet.map((q) => (
                   <option key={q.id} value={q.id}>
                     {q.text.slice(0, 64)}
                   </option>
@@ -1143,22 +1320,43 @@ export default function AdminDashboard() {
 
               <div>
                 <label className="text-xs font-medium uppercase tracking-wide text-neutral-500">
-                  Question visibility
+                  Show this question in which modes?
                 </label>
-                <select
-                  value={questionVisibility}
-                  onChange={(ev) => setQuestionVisibility(ev.target.value)}
-                  className="glass-input mt-1 w-full rounded-xl px-3 py-2 text-sm text-neutral-100"
-                >
-                  <option value={QUESTION_VISIBILITY.POLL}>Live poll only</option>
-                  <option value={QUESTION_VISIBILITY.QUIZ}>Quiz only</option>
-                  <option value={QUESTION_VISIBILITY.BOTH}>Poll + Quiz</option>
-                </select>
-                <p className="mt-1 text-[10px] text-neutral-500">
-                  New questions are tagged to the active quiz set:{' '}
-                  <span className="font-mono text-neutral-300">
-                    {(quizzesMap[activeQuizId] && quizzesMap[activeQuizId].title) || activeQuizId}
-                  </span>
+                <div className="mt-2 flex flex-wrap gap-4 text-xs text-neutral-200">
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={visibleModesBox.form}
+                      onChange={(e) =>
+                        setVisibleModesBox((b) => ({ ...b, form: e.target.checked }))
+                      }
+                    />
+                    Form
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={visibleModesBox.live_poll}
+                      onChange={(e) =>
+                        setVisibleModesBox((b) => ({ ...b, live_poll: e.target.checked }))
+                      }
+                    />
+                    Live poll
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={visibleModesBox.quiz}
+                      onChange={(e) =>
+                        setVisibleModesBox((b) => ({ ...b, quiz: e.target.checked }))
+                      }
+                    />
+                    Quiz
+                  </label>
+                </div>
+                <p className="mt-2 text-[10px] text-neutral-500">
+                  New questions are filed under the active set for this mode (quiz / form / live poll).
+                  Use the lists above to switch sets.
                 </p>
               </div>
 
@@ -1181,15 +1379,36 @@ export default function AdminDashboard() {
           ) : null}
 
           <div className="mt-8 space-y-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
-              Your questions ({(quizzesMap[activeQuizId] && quizzesMap[activeQuizId].title) || activeQuizId})
-            </h3>
-            {questionListForActiveQuiz.length === 0 ? (
+            <div className="flex flex-col gap-2 border-b border-white/10 pb-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                Your questions
+                <span className="mt-0.5 block font-normal normal-case text-neutral-400">
+                  {filterListByActiveSet ? (
+                    <>
+                      Showing: <span className="font-semibold text-neutral-200">{activeSetLabel}</span> (
+                      {questionListForPanel.length} of {questionList.length})
+                    </>
+                  ) : (
+                    <>Showing all ({questionList.length})</>
+                  )}
+                </span>
+              </h3>
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-neutral-300">
+                <input
+                  type="checkbox"
+                  checked={filterListByActiveSet}
+                  onChange={(e) => setFilterListByActiveSet(e.target.checked)}
+                />
+                Only this set (filter list)
+              </label>
+            </div>
+            {questionListForPanel.length === 0 ? (
               <p className="text-sm text-neutral-500">
-                No questions in this quiz set. Switch the active quiz or add questions.
+                No questions here. Turn off the filter to see all, or switch the active quiz / form /
+                live poll set and add questions.
               </p>
             ) : (
-              questionListForActiveQuiz.map((q, idx) => (
+              questionListForPanel.map((q, idx) => (
                 <QuestionCard
                   key={q.id}
                   question={q}
@@ -1197,7 +1416,7 @@ export default function AdminDashboard() {
                   isActive={meta.activeQuestionId === q.id}
                   isQuizFocus={meta.quizActiveQuestionId === q.id}
                   index={idx}
-                  total={questionListForActiveQuiz.length}
+                  total={questionListForPanel.length}
                   onTogglePrivacy={handleTogglePrivacy}
                   onSelectActive={handleSetActive}
                   onDelete={handleDeleteQuestion}
@@ -1251,13 +1470,13 @@ export default function AdminDashboard() {
             ) : (
               <>
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  {questionList.length ? (
+                  {chartQuestionPickList.length ? (
                     <select
                       value={selectedQuestionId || ''}
                       onChange={(ev) => setSelectedQuestionId(ev.target.value)}
                       className="glass-input max-w-full rounded-lg px-2 py-1 text-xs text-neutral-100"
                     >
-                      {questionList.map((q) => (
+                      {chartQuestionPickList.map((q) => (
                         <option key={q.id} value={q.id}>
                           {q.text.slice(0, 60)}
                           {q.text.length > 60 ? '…' : ''}

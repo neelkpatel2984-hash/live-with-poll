@@ -23,6 +23,16 @@ function createFirebaseApp() {
 export const app = createFirebaseApp();
 export const db = getDatabase(app);
 
+/** Call before RTDB writes; surfaces missing .env instead of opaque Firebase errors. */
+export function assertFirebaseEnv() {
+  const url = import.meta.env.VITE_FIREBASE_DATABASE_URL;
+  if (!url || !String(url).trim()) {
+    throw new Error(
+      'Missing VITE_FIREBASE_DATABASE_URL. Add a .env file at the repo root (see .env.example) and restart the dev server.'
+    );
+  }
+}
+
 /** RTDB paths — wipe `rooms/{roomCode}` to clear a session */
 export const roomPath = (roomCode) => `rooms/${roomCode}`;
 export const roomMetaPath = (roomCode) => `rooms/${roomCode}/meta`;

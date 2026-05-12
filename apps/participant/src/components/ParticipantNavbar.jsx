@@ -6,7 +6,7 @@ const HOST_APP_URL = (import.meta.env.VITE_HOST_APP_URL || '').replace(/\/$/, ''
 
 export default function ParticipantNavbar() {
   return (
-    <header className="sticky top-0 z-50 border-b border-white/10 bg-black/60 px-4 py-3 backdrop-blur-xl sm:px-6">
+    <header className="app-header sticky top-0 z-50 px-4 py-3 sm:px-6">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
         <Link
           to="/"

@@ -19,6 +19,10 @@ Optional when the two sites use **different domains**:
 - **`VITE_HOST_APP_URL`** — used by the **participant** build. If set, shows a “Host console” link to this URL. If unset, that link is hidden.
 - **`VITE_PARTICIPANT_APP_URL`** — used by the **host** build for “Participant site” / “Participant view” links. If unset, host falls back to `window.location.origin` (same machine / path only).
 
+## Firebase Realtime Database rules
+
+Deploy `database.rules.json` from this repo. Room creation writes **`rooms/{pin}/meta`** and **`rooms/{pin}/_hb/{bundleKey}`** as two separate paths so rules that only allow those children (not the whole `rooms/{pin}` node) still work.
+
 ## Build
 
 From repo root:

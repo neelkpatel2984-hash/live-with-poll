@@ -8,7 +8,8 @@ import {
 } from 'firebase/database';
 import { db, roomEmojiEventsPath } from '../firebase/config';
 
-const TTL_MS = 4200;
+/** Longer than longest animation so particles are not culled mid-float */
+const TTL_MS = 6500;
 
 export default function EmojiFizzLayer({ roomCode, enabled }) {
   const [particles, setParticles] = useState([]);
@@ -57,19 +58,31 @@ export default function EmojiFizzLayer({ roomCode, enabled }) {
       className="pointer-events-none fixed inset-0 z-[60] overflow-hidden"
       aria-hidden
     >
-      {particles.map((p) => (
-        <span
-          key={p.id}
-          className="emoji-fizz absolute bottom-0 text-3xl sm:text-4xl drop-shadow-lg"
-          style={{
-            left: `${p.x}%`,
-            animationDuration: `${3 + (p.id.length % 3) * 0.2}s`,
-            ['--fizz-drift']: `${(p.id.length % 5) * 8 - 16}px`,
-          }}
-        >
-          {p.emoji}
-        </span>
-      ))}
+      {particles.map((p) => {
+        const x = Math.min(94, Math.max(6, p.x));
+        const duration = 2.8 + (p.id.length % 5) * 0.35;
+        const drift = (p.id.length % 7) * 6 - 18;
+        return (
+          <span
+            key={p.id}
+            className="pointer-events-none fixed bottom-0 z-[61] text-3xl leading-none sm:text-4xl"
+            style={{
+              left: `${x}%`,
+              transform: 'translateX(-50%)',
+            }}
+          >
+            <span
+              className="emoji-fizz inline-block drop-shadow-lg"
+              style={{
+                animationDuration: `${duration}s`,
+                ['--fizz-drift']: `${drift}px`,
+              }}
+            >
+              {p.emoji}
+            </span>
+          </span>
+        );
+      })}
     </div>
   );
 }

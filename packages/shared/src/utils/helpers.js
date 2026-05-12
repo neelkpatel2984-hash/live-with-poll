@@ -149,22 +149,56 @@ export function defaultQuestionVisibilityForMode(mode) {
   return QUESTION_VISIBILITY.BOTH;
 }
 
+/** Modes a question may appear in (multi-select). Legacy `visibility` is mapped here. */
+export function getQuestionVisibleModes(question) {
+  if (Array.isArray(question?.visibleModes) && question.visibleModes.length) {
+    const allowed = new Set([MODES.FORM, MODES.LIVE_POLL, MODES.QUIZ]);
+    return question.visibleModes.filter((m) => allowed.has(m));
+  }
+  const v = question?.visibility;
+  if (v === QUESTION_VISIBILITY.POLL) return [MODES.LIVE_POLL];
+  if (v === QUESTION_VISIBILITY.QUIZ) return [MODES.QUIZ];
+  if (v === QUESTION_VISIBILITY.BOTH) return [MODES.LIVE_POLL, MODES.QUIZ];
+  return [MODES.FORM, MODES.LIVE_POLL, MODES.QUIZ];
+}
+
+/** Default checkboxes when adding a question while session is in `mode`. */
+export function defaultVisibleModesCheckboxes(mode) {
+  if (mode === MODES.FORM) return { form: true, live_poll: false, quiz: false };
+  if (mode === MODES.LIVE_POLL) return { form: false, live_poll: true, quiz: false };
+  if (mode === MODES.QUIZ) return { form: false, live_poll: false, quiz: true };
+  return { form: true, live_poll: true, quiz: true };
+}
+
+export function visibleModesFromCheckboxes(box) {
+  const out = [];
+  if (box.form) out.push(MODES.FORM);
+  if (box.live_poll) out.push(MODES.LIVE_POLL);
+  if (box.quiz) out.push(MODES.QUIZ);
+  return out.length ? out : [MODES.FORM, MODES.LIVE_POLL, MODES.QUIZ];
+}
+
 /** Participant UI: whether this question should appear in the current session mode. */
 export function questionAllowedInMode(question, mode) {
-  const v = question?.visibility || QUESTION_VISIBILITY.BOTH;
-  if (mode === MODES.LIVE_POLL) {
-    return v === QUESTION_VISIBILITY.POLL || v === QUESTION_VISIBILITY.BOTH;
-  }
-  if (mode === MODES.QUIZ) {
-    return v === QUESTION_VISIBILITY.QUIZ || v === QUESTION_VISIBILITY.BOTH;
-  }
-  return true;
+  return getQuestionVisibleModes(question).includes(mode);
 }
 
 export function questionBelongsToQuiz(question, activeQuizId) {
   const qid = question?.quizId ?? 'default';
   const active = activeQuizId ?? 'default';
   return qid === active;
+}
+
+export function questionBelongsToForm(question, activeFormId) {
+  const fid = question?.formId ?? 'default';
+  const active = activeFormId ?? 'default';
+  return fid === active;
+}
+
+export function questionBelongsToLivePollSet(question, activeLivePollId) {
+  const pid = question?.livePollId ?? 'default';
+  const active = activeLivePollId ?? 'default';
+  return pid === active;
 }
 
 export function participantNameKey(roomCode) {

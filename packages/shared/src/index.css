@@ -2,18 +2,58 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─── Theme tokens (Tailwind v3 — no @import tailwindcss v4) ───────── */
+html.dark {
+  --radius: 0.75rem;
+  --background: #050505;
+  --foreground: #f5f5f5;
+  --muted-foreground: #a3a3a3;
+  --border-subtle: rgba(255, 255, 255, 0.1);
+  --glass-bg: rgba(255, 255, 255, 0.06);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-input-bg: rgba(255, 255, 255, 0.06);
+  --glass-focus-ring: rgba(220, 38, 38, 0.35);
+  --header-bg: rgba(5, 5, 5, 0.72);
+  --header-border: rgba(255, 255, 255, 0.08);
+  --page-gradient:
+    radial-gradient(ellipse 120% 70% at 50% -25%, rgba(220, 38, 38, 0.09) 0%, transparent 58%),
+    radial-gradient(ellipse 90% 55% at 95% 75%, rgba(220, 38, 38, 0.045) 0%, transparent 52%),
+    radial-gradient(ellipse 80% 50% at 5% 85%, rgba(127, 29, 29, 0.06) 0%, transparent 48%),
+    var(--background);
+  --primary: #dc2626;
+  --ring: #dc2626;
+}
+
+html.light {
+  --background: #f5f5f4;
+  --foreground: #0f172a;
+  --muted-foreground: #64748b;
+  --border-subtle: rgba(15, 23, 42, 0.1);
+  --glass-bg: rgba(255, 255, 255, 0.82);
+  --glass-border: rgba(15, 23, 42, 0.1);
+  --glass-input-bg: rgba(255, 255, 255, 0.92);
+  --glass-focus-ring: rgba(220, 38, 38, 0.25);
+  --header-bg: rgba(255, 255, 255, 0.82);
+  --header-border: rgba(15, 23, 42, 0.08);
+  --page-gradient:
+    radial-gradient(ellipse 110% 65% at 50% -20%, rgba(220, 38, 38, 0.07) 0%, transparent 55%),
+    radial-gradient(ellipse 85% 50% at 100% 100%, rgba(252, 165, 165, 0.14) 0%, transparent 50%),
+    radial-gradient(ellipse 75% 45% at 0% 95%, rgba(254, 226, 226, 0.35) 0%, transparent 45%),
+    linear-gradient(180deg, #fafafa 0%, var(--background) 55%);
+  --primary: #dc2626;
+  --ring: #dc2626;
+}
+
 @layer base {
   html {
     @apply antialiased;
   }
 
   body {
-    @apply min-h-screen text-neutral-100;
-    background-color: #030303;
-    background-image:
-      radial-gradient(ellipse 120% 80% at 50% -20%, rgba(220, 38, 38, 0.22), transparent 55%),
-      radial-gradient(ellipse 80% 50% at 100% 50%, rgba(185, 28, 28, 0.12), transparent 45%),
-      radial-gradient(ellipse 70% 60% at 0% 80%, rgba(127, 29, 29, 0.14), transparent 50%);
+    min-height: 100vh;
+    color: var(--foreground);
+    background-color: var(--background);
+    background-image: var(--page-gradient);
     background-attachment: fixed;
   }
 
@@ -21,16 +61,7 @@
     @apply min-h-screen;
   }
 
-  .light body {
-    @apply text-slate-900;
-    background-color: #f4f4f5;
-    background-image:
-      radial-gradient(ellipse 120% 80% at 50% -20%, rgba(248, 113, 113, 0.14), transparent 55%),
-      radial-gradient(ellipse 80% 50% at 100% 50%, rgba(252, 165, 165, 0.12), transparent 45%),
-      radial-gradient(ellipse 70% 60% at 0% 80%, rgba(254, 202, 202, 0.18), transparent 50%);
-    background-attachment: fixed;
-  }
-
+  /* Light mode: keep Tailwind neutral utilities readable on cards */
   .light .text-neutral-50,
   .light .text-neutral-100 {
     @apply text-slate-900;
@@ -42,33 +73,153 @@
 
   .light .text-neutral-400,
   .light .text-neutral-500 {
-    @apply text-slate-600;
+    color: var(--muted-foreground);
   }
+}
+
+/* ─── App chrome (nav) — theme-aware, no JS ──────────────────────── */
+.app-header {
+  background: var(--header-bg);
+  border-bottom: 1px solid var(--header-border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+/* ─── Glass (reference-aligned, CSS-only) ─────────────────────────── */
+@layer components {
+  .glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    border-radius: 1rem;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+  }
+
+  html.dark .glass {
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  }
+
+  .glass-strong {
+    background: var(--glass-bg);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid var(--glass-border);
+    border-radius: 1rem;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.2);
+  }
+
+  html.dark .glass-strong {
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.45);
+  }
+
+  .glass-input {
+    background: var(--glass-input-bg);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid var(--glass-border);
+    border-radius: 0.75rem;
+    color: var(--foreground);
+  }
+
+  .glass-input::placeholder {
+    color: var(--muted-foreground);
+    opacity: 0.85;
+  }
+
+  .glass-input:focus {
+    outline: none;
+    border-color: rgba(220, 38, 38, 0.45);
+    box-shadow: 0 0 0 2px var(--glass-focus-ring);
+  }
+
+  .glass-hover:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+
+  html.light .glass-hover:hover {
+    background: rgba(255, 255, 255, 0.95);
+    border-color: rgba(15, 23, 42, 0.15);
+  }
+}
+
+/* ─── Accent utilities ───────────────────────────────────────────── */
+.red-glow {
+  box-shadow:
+    0 0 40px rgba(220, 38, 38, 0.12),
+    0 0 80px rgba(220, 38, 38, 0.04);
+}
+
+.red-glow-text {
+  text-shadow:
+    0 0 20px rgba(220, 38, 38, 0.35),
+    0 0 40px rgba(220, 38, 38, 0.12);
 }
 
 @layer utilities {
   .text-balance {
     text-wrap: balance;
   }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.04);
+  }
+  html.light .custom-scrollbar::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.06);
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 3px;
+  }
+  html.light .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(15, 23, 42, 0.2);
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.22);
+  }
+  html.light .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(15, 23, 42, 0.35);
+  }
 }
 
+/* ─── Emoji float (participant layer) ─────────────────────────────── */
 @keyframes emoji-fizz-up {
   0% {
-    transform: translate3d(0, 0, 0) scale(0.85);
+    transform: translate3d(var(--fizz-drift, 0px), 0, 0) scale(0.88);
     opacity: 0;
   }
-  12% {
+  10% {
     opacity: 1;
   }
   100% {
-    transform: translate3d(var(--fizz-drift, 0px), -110vh, 0) scale(1.15);
+    transform: translate3d(var(--fizz-drift, 0px), calc(-100dvh - 8%), 0) scale(1.08);
     opacity: 0;
   }
 }
 
 .emoji-fizz {
   --fizz-drift: 0px;
+  will-change: transform, opacity;
   animation-name: emoji-fizz-up;
-  animation-timing-function: ease-out;
+  animation-timing-function: cubic-bezier(0.2, 0.75, 0.25, 1);
   animation-fill-mode: forwards;
+}
+
+/* ─── Recharts (readability on dark + light) ─────────────────────── */
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: var(--border-subtle);
+}
+
+.recharts-text {
+  fill: var(--muted-foreground) !important;
+  font-size: 12px;
+}
+
+.recharts-tooltip-wrapper {
+  outline: none;
 }

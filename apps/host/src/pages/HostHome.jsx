@@ -1,7 +1,12 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ref, set, get } from 'firebase/database';
-import { db, roomMetaPath, roomPath } from '@shared/firebase/config.js';
+import {
+  db,
+  assertFirebaseEnv,
+  roomMetaPath,
+  roomHostBundlePath,
+} from '@shared/firebase/config.js';
 import {
   generateRoomCode,
   generateAdminToken,
@@ -27,6 +32,8 @@ export default function HostHome() {
     setError('');
     setBusy(true);
     try {
+      assertFirebaseEnv();
+
       let code = generateRoomCode();
       for (let attempt = 0; attempt < 30; attempt += 1) {
         const snap = await get(ref(db, roomMetaPath(code)));
@@ -37,37 +44,55 @@ export default function HostHome() {
       const adminToken = generateAdminToken();
       const bundleKey = generateId('hb');
 
-      await set(ref(db, roomPath(code)), {
-        meta: {
-          mode: MODES.LIVE_POLL,
-          activeQuestionId: null,
-          createdAt: Date.now(),
-          responsePrivacy: RESPONSE_PRIVACY.PUBLIC,
-          commentPrivacy: COMMENT_PRIVACY.PUBLIC,
-          commentsHidden: false,
-          sessionStatus: 'live',
-          musicTrackId: DEFAULT_MUSIC_TRACK_ID,
-          musicVolume: DEFAULT_MUSIC_VOLUME,
-          quizPhase: QUIZ_PHASE.IDLE,
-          quizActiveQuestionId: null,
-          quizOpenedAt: null,
-          quizFullMode: false,
-          activeQuizId: DEFAULT_QUIZ_ID,
-          quizzes: {
-            [DEFAULT_QUIZ_ID]: { title: 'Quiz 1', order: 0 },
-          },
+      /* Two writes: a single set() on rooms/{code} needs parent .write in RTDB rules.
+         Child paths meta/ and _hb/ are allowed in database.rules.json. */
+      await set(ref(db, roomMetaPath(code)), {
+        mode: MODES.LIVE_POLL,
+        activeQuestionId: null,
+        createdAt: Date.now(),
+        responsePrivacy: RESPONSE_PRIVACY.PUBLIC,
+        commentPrivacy: COMMENT_PRIVACY.PUBLIC,
+        commentsHidden: false,
+        sessionStatus: 'live',
+        musicTrackId: DEFAULT_MUSIC_TRACK_ID,
+        musicVolume: DEFAULT_MUSIC_VOLUME,
+        quizPhase: QUIZ_PHASE.IDLE,
+        quizActiveQuestionId: null,
+        quizOpenedAt: null,
+        quizFullMode: false,
+        activeQuizId: DEFAULT_QUIZ_ID,
+        quizzes: {
+          [DEFAULT_QUIZ_ID]: { title: 'Quiz 1', order: 0 },
         },
-        _hb: {
-          [bundleKey]: { adminToken },
+        activeFormId: DEFAULT_QUIZ_ID,
+        forms: {
+          [DEFAULT_QUIZ_ID]: { title: 'Form 1', order: 0 },
+        },
+        activeLivePollId: DEFAULT_QUIZ_ID,
+        livePolls: {
+          [DEFAULT_QUIZ_ID]: { title: 'Live poll 1', order: 0 },
         },
       });
+      await set(ref(db, roomHostBundlePath(code, bundleKey)), { adminToken });
 
       writeHostCredential(code, adminToken, bundleKey);
       trackHostRoom(code);
       navigate(`/admin/${code}`);
     } catch (e) {
       console.error(e);
-      setError('Could not create session. Check Firebase configuration.');
+      const code = e?.code;
+      const msg = e?.message || String(e);
+      if (code === 'PERMISSION_DENIED') {
+        setError(
+          'Permission denied by Firebase rules. Deploy database.rules.json from this repo (meta and _hb must allow writes), or check the Firebase console.'
+        );
+      } else if (msg.includes('Missing VITE_FIREBASE')) {
+        setError(msg);
+      } else {
+        setError(
+          `Could not create session: ${msg}. Confirm .env has all VITE_FIREBASE_* values and DATABASE_URL matches your Realtime Database.`
+        );
+      }
     } finally {
       setBusy(false);
     }

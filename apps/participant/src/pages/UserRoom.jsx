@@ -28,6 +28,8 @@ import {
   roomAllowsParticipantPdf,
   questionAllowedInMode,
   questionBelongsToQuiz,
+  questionBelongsToForm,
+  questionBelongsToLivePollSet,
 } from '@shared/utils/helpers.js';
 import { burstConfetti, leaderboardConfetti } from '@shared/utils/confettiFx.js';
 import { QUICK_EMOJIS } from '@shared/constants/quickEmojis.js';
@@ -182,10 +184,15 @@ export default function UserRoom() {
   const visibleQuestions = useMemo(() => {
     if (!meta) return [];
     const modeFiltered = questionList.filter((q) => questionAllowedInMode(q, meta.mode));
-    if (meta.mode === MODES.FORM) return modeFiltered;
+    if (meta.mode === MODES.FORM) {
+      const activeForm = meta.activeFormId ?? 'default';
+      return modeFiltered.filter((q) => questionBelongsToForm(q, activeForm));
+    }
     if (meta.mode === MODES.LIVE_POLL) {
+      const activePoll = meta.activeLivePollId ?? 'default';
+      const inSet = modeFiltered.filter((q) => questionBelongsToLivePollSet(q, activePoll));
       if (!meta.activeQuestionId) return [];
-      return modeFiltered.filter((q) => q.id === meta.activeQuestionId);
+      return inSet.filter((q) => q.id === meta.activeQuestionId);
     }
     if (meta.mode === MODES.QUIZ) {
       if (

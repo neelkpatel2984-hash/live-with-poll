@@ -1,9 +1,5 @@
 import { useState } from 'react';
-import {
-  QUESTION_TYPES,
-  MODES,
-  QUESTION_VISIBILITY,
-} from '@shared/utils/helpers.js';
+import { QUESTION_TYPES, MODES, getQuestionVisibleModes } from '@shared/utils/helpers.js';
 
 const TYPE_LABELS = {
   [QUESTION_TYPES.MCQ]: 'Multiple choice',
@@ -12,11 +8,16 @@ const TYPE_LABELS = {
   [QUESTION_TYPES.RATING]: 'Rating (0–10)',
 };
 
-const VIS_LABELS = {
-  [QUESTION_VISIBILITY.POLL]: 'Poll only',
-  [QUESTION_VISIBILITY.QUIZ]: 'Quiz only',
-  [QUESTION_VISIBILITY.BOTH]: 'Poll + Quiz',
+const MODE_SHORT = {
+  [MODES.FORM]: 'Form',
+  [MODES.LIVE_POLL]: 'Poll',
+  [MODES.QUIZ]: 'Quiz',
 };
+
+function visibleModesLabel(question) {
+  const modes = getQuestionVisibleModes(question);
+  return modes.map((m) => MODE_SHORT[m] || m).join(' · ');
+}
 
 export default function QuestionCard({
   question,
@@ -47,7 +48,7 @@ export default function QuestionCard({
     (sessionMode === MODES.LIVE_POLL && isActive) ||
     (sessionMode === MODES.QUIZ && isQuizFocus);
 
-  const visibility = question.visibility || QUESTION_VISIBILITY.BOTH;
+  const setLine = `Quiz: ${question.quizId ?? 'default'} · Form: ${question.formId ?? 'default'} · Live poll: ${question.livePollId ?? 'default'}`;
 
   function beginEdit() {
     setEditText(question.text || '');
@@ -107,8 +108,11 @@ export default function QuestionCard({
         <div className="min-w-0 flex-1">
           <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
             {TYPE_LABELS[question.type] ?? question.type}
-            <span className="ml-2 text-neutral-600">· {VIS_LABELS[visibility] ?? visibility}</span>
+            <span className="ml-2 text-neutral-600">
+              · Modes: {visibleModesLabel(question)}
+            </span>
           </p>
+          <p className="mt-0.5 font-mono text-[10px] text-neutral-500">{setLine}</p>
           {editing ? (
             <form className="mt-2 space-y-2" onSubmit={saveEdit}>
               <textarea
